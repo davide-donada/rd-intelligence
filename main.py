@@ -13,7 +13,6 @@ except ImportError as e:
     print(f"❌ ERRORE IMPORT: {e}")
     sys.exit()
 
-# Configurazione DB (La stessa degli altri file)
 DB_CONFIG = {
     'user': 'root',
     'password': os.getenv('DB_PASSWORD'),
@@ -23,32 +22,24 @@ DB_CONFIG = {
 }
 
 def get_next_target():
-    """Pesca il prossimo ASIN 'pending' dalla lista e lo blocca"""
     conn = None
     target_asin = None
     try:
         conn = mysql.connector.connect(**DB_CONFIG)
         cursor = conn.cursor()
-        
-        # 1. Troviamo il prossimo (LIMIT 1)
         cursor.execute("SELECT asin FROM hunting_list WHERE status = 'pending' LIMIT 1")
         result = cursor.fetchone()
         
         if result:
             target_asin = result[0]
-            # 2. Lo segniamo come 'processing' così nessun altro worker lo prende
             cursor.execute("UPDATE hunting_list SET status = 'processing' WHERE asin = %s", (target_asin,))
             conn.commit()
-            
-    except Exception as e:
-        print(f"⚠️ Errore lettura coda: {e}")
+    except: pass
     finally:
-        if conn and conn.is_connected(): conn.close()
-    
+        if conn: conn.close()
     return target_asin
 
 def mark_target_status(asin, status):
-    """Aggiorna lo stato nella coda (done/error)"""
     try:
         conn = mysql.connector.connect(**DB_CONFIG)
         cursor = conn.cursor()
@@ -58,19 +49,17 @@ def mark_target_status(asin, status):
     except: pass
 
 def main_loop():
-    print(f"\n--- 🤖 CICLO AVVIATO: {datetime.now().strftime('%H:%M:%S')} ---")
+    print(f"\n--- 🤖 CICLO: {datetime.now().strftime('%H:%M:%S')} ---")
     
     # 1. CERCA LAVORO
     asin = get_next_target()
     
     if not asin:
-        print("💤 Nessun ASIN in attesa. La coda è vuota.")
-        # Se non c'è lavoro, controlliamo se c'è da pubblicare qualcosa e poi dormiamo
-        print("--- ✍️ CONTROLLO PUBBLICAZIONE ---")
-        run_publisher()
-        return False # Ritorna False per dire "non ho lavorato"
+        print("💤 Coda vuota. Controllo pubblicazioni...")
+        run_publisher() # Pubblica eventuali bozze
+        return False
 
-    print(f"🎯 Trovato nuovo target: {asin}")
+    print(f"🎯 Target: {asin}")
     
     # 2. ESECUZIONE
     try:
@@ -78,36 +67,28 @@ def main_loop():
         
         if raw_data and raw_data['title'] != "Titolo non trovato":
             if raw_data['price'] > 0:
-                print(f"🧠 Generazione AI in corso...")
-                recensione_html = genera_recensione_seo(raw_data)
-                raw_data['ai_content'] = recensione_html if recensione_html else "<p>Elaborazione...</p>"
+                html_art = genera_recensione_seo(raw_data)
+                raw_data['ai_content'] = html_art if html_art else "<p>Errore generazione AI.</p>"
             else:
                 raw_data['ai_content'] = "<p>Prodotto non disponibile.</p>"
 
             save_to_db(raw_data)
-            mark_target_status(asin, 'done') # ✅ Missione compiuta
-            print(f"✅ {asin} completato e salvato.")
+            mark_target_status(asin, 'done')
+            print(f"✅ {asin} Completato.")
         else:
-            print("⚠️ Errore scraping (Captcha o titolo vuoto).")
-            mark_target_status(asin, 'error') # ❌ Segnaliamo errore
+            print("⚠️ Errore Scraping.")
+            mark_target_status(asin, 'error')
             
     except Exception as e:
-        print(f"❌ Errore critico su {asin}: {e}")
+        print(f"❌ Errore Critico: {e}")
         mark_target_status(asin, 'error')
 
-    # 3. PAUSA DI SICUREZZA TRA UN ASIN E L'ALTRO
-    wait = random.randint(15, 45)
-    print(f"☕ Riposo {wait}s prima del prossimo...")
-    time.sleep(wait)
-    return True # Ho lavorato
+    time.sleep(10)
+    return True
 
 if __name__ == "__main__":
-    print("♾️  MODALITÀ INDUSTRIALE ATTIVATA")
+    print("♾️  SISTEMA ATTIVO (NO PLUGIN VERSION)")
     while True:
-        ha_lavorato = main_loop()
-        
-        if not ha_lavorato:
-            # Se la coda è vuota, dorme di più (es. 5 minuti) per non stressare il DB
-            print("💤 Niente da fare. Controllo di nuovo tra 5 minuti...")
-            time.sleep(300)
-        # Se ha lavorato, il loop ricomincia subito (dopo la piccola pausa interna)
+        lavorato = main_loop()
+        if not lavorato:
+            time.sleep(60) # Dorme 1 minuto se non c'è lavoro

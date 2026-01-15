@@ -2,7 +2,6 @@ import mysql.connector
 import requests
 import base64
 import os
-import json
 from datetime import datetime
 
 # --- CONFIGURAZIONE ---
@@ -14,7 +13,7 @@ DB_CONFIG = {
     'database': 'recensionedigitale'
 }
 
-WP_BASE_URL = "https://www.recensionedigitale.it/wp-json"
+WP_URL = "https://www.recensionedigitale.it/wp-json/wp/v2/posts"
 WP_USER = os.getenv('WP_USER', 'davide')
 WP_APP_PASSWORD = os.getenv('WP_PASSWORD')
 
@@ -27,6 +26,45 @@ def get_headers():
         'Content-Type': 'application/json',
         'User-Agent': 'Mozilla/5.0'
     }
+
+def format_article_html(product):
+    """Assembla il layout finale"""
+    asin = product[1]
+    title = product[2]
+    price = product[3]
+    image_url = product[5]
+    ai_content = product[6] # HTML già pronto dall'AI
+
+    aff_link = f"https://www.amazon.it/dp/{asin}?tag=recensionedigitale-21"
+
+    # Box Iniziale (Immagine + Prezzo + Bottone)
+    header_html = f"""
+    <div style="background-color: #fff; border: 1px solid #e1e1e1; padding: 20px; margin-bottom: 30px; border-radius: 8px; display: flex; flex-wrap: wrap; gap: 20px; align-items: center;">
+        <div style="flex: 1; text-align: center; min-width: 200px;">
+            <a href="{aff_link}" rel="nofollow sponsored" target="_blank">
+                <img src="{image_url}" alt="{title}" style="max-height: 250px; width: auto; object-fit: contain;">
+            </a>
+        </div>
+        <div style="flex: 1.5; min-width: 250px;">
+            <h2 style="margin-top: 0; font-size: 1.4rem;">{title}</h2>
+            <div style="font-size: 2rem; color: #B12704; font-weight: bold; margin: 10px 0;">€ {price}</div>
+            <a href="{aff_link}" rel="nofollow sponsored" target="_blank" 
+               style="background-color: #ff9900; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">
+               👉 Vedi Offerta su Amazon
+            </a>
+            <p style="font-size: 0.8rem; color: #666; margin-top: 5px;">Prezzo aggiornato al: {datetime.now().strftime("%d/%m/%Y")}</p>
+        </div>
+    </div>
+    """
+
+    footer_html = """
+    <hr style="margin: 40px 0;">
+    <p style="font-size: 0.75rem; color: #999; text-align: center;">
+        RecensioneDigitale.it partecipa al Programma Affiliazione Amazon EU. Acquistando tramite i nostri link potremmo ricevere una commissione.
+    </p>
+    """
+
+    return header_html + ai_content + footer_html
 
 def run_publisher():
     print("🔌 [WP] Controllo coda pubblicazione...")
@@ -42,96 +80,26 @@ def run_publisher():
             return
 
         for p in products:
-            p_id = p[0]
-            asin = p[1]
             title = p[2]
-            price = p[3]
-            image_url = p[5]
-            ai_data_raw = p[6]
-            
-            print(f"   > Elaborazione: {title[:30]}...")
+            print(f"   > Pubblicazione: {title[:30]}...")
 
-            # 1. Parsing dati
-            score = 80
-            pros = []
-            cons = []
-            body_content = ""
-            meta_desc = ""
-
-            try:
-                if ai_data_raw:
-                    ai_data = json.loads(ai_data_raw)
-                    body_content = ai_data.get('review_content', '')
-                    score = int(ai_data.get('final_score', 80)) # Prende 85 come int
-                    pros = ai_data.get('pros', [])
-                    cons = ai_data.get('cons', [])
-                    meta_desc = ai_data.get('meta_desc', '')
-            except:
-                body_content = ai_data_raw
-
-            # 2. Crea HTML
-            aff_link = f"https://www.amazon.it/dp/{asin}?tag=recensionedigitale-21"
-            html_final = f"""
-            <div style="background-color: #fff; border: 1px solid #e1e1e1; padding: 20px; margin-bottom: 30px; border-radius: 8px;">
-                <div style="display: flex; gap: 20px; align-items: center; flex-wrap: wrap;">
-                    <div style="flex: 1; text-align: center; min-width: 200px;">
-                        <a href="{aff_link}" rel="nofollow sponsored" target="_blank">
-                            <img src="{image_url}" style="max-height: 250px; width: auto;">
-                        </a>
-                    </div>
-                    <div style="flex: 1.5; min-width: 250px;">
-                        <h2 style="margin-top:0;">{title}</h2>
-                        <div style="font-size: 2.2rem; color: #B12704; font-weight: bold; margin: 10px 0;">€ {price}</div>
-                        <a href="{aff_link}" rel="nofollow sponsored" target="_blank" 
-                           style="background: #ff9900; color: white; padding: 12px 25px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: bold;">
-                           👉 Vedi Offerta su Amazon
-                        </a>
-                    </div>
-                </div>
-            </div>
-            <div class="rd-review-body">{body_content}</div>
-            <hr>
-            [lets_review]
-            <p style="font-size: 0.7rem; color: #999; text-align: center;">RecensioneDigitale.it partecipa al Programma Affiliazione Amazon EU.</p>
-            """
-
-            # 3. Pubblica Post Base
             post_data = {
                 'title': f"Recensione: {title}",
-                'content': html_final,
-                'status': 'draft', 
-                'excerpt': meta_desc
+                'content': format_article_html(p),
+                'status': 'draft', # Mettilo 'publish' se ti fidi
+                # 'categories': [1] # ID categoria se lo sai
             }
 
             try:
-                resp_post = requests.post(f"{WP_BASE_URL}/wp/v2/posts", headers=get_headers(), json=post_data)
-                
-                if resp_post.status_code == 201:
-                    new_post_id = resp_post.json()['id']
-                    print(f"     ✅ Post creato ID: {new_post_id}")
-                    
-                    # 4. CHIAMA IL NOSTRO TUNNEL PHP (FIX LET'S REVIEW)
-                    meta_payload = {
-                        'id': new_post_id,
-                        'score': score, # Es. 85
-                        'pros': pros,   # Es. ["Veloce", "Bello"]
-                        'cons': cons    # Es. ["Costoso"]
-                    }
-                    
-                    resp_meta = requests.post(f"{WP_BASE_URL}/rd-api/v1/save-review", headers=get_headers(), json=meta_payload)
-                    
-                    if resp_meta.status_code == 200:
-                        print(f"     ✨ Let's Review Abilitato e Compilato!")
-                    else:
-                        print(f"     ⚠️ Errore API Custom: {resp_meta.text}")
-
-                    cursor.execute("UPDATE products SET status = 'published' WHERE id = %s", (p_id,))
+                response = requests.post(WP_URL, headers=get_headers(), json=post_data)
+                if response.status_code == 201:
+                    print("     ✅ Pubblicato con successo!")
+                    cursor.execute("UPDATE products SET status = 'published' WHERE id = %s", (p[0],))
                     conn.commit()
                 else:
-                    print(f"     ❌ Errore WP: {resp_post.text}")
-            
+                    print(f"     ❌ Errore WP: {response.text}")
             except Exception as e:
-                print(f"     ❌ Network Error: {e}")
+                print(f"     ❌ Errore Rete: {e}")
 
     except Exception as err:
         print(f"❌ DB Error: {err}")

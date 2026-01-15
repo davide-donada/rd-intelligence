@@ -1,32 +1,33 @@
 import os
 from openai import OpenAI
-import json
 
 client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 
 def genera_recensione_seo(prodotto):
-    print(f"🧠 AI: Scrivo recensione per '{prodotto['title']}'...")
+    print(f"🧠 AI: Scrivo articolo HTML per '{prodotto['title']}'...")
 
     prompt_system = """
-    Sei un redattore esperto per RecensioneDigitale.it.
-    Il tuo compito è analizzare il prodotto e restituire un JSON strutturato.
+    Sei un redattore esperto di RecensioneDigitale.it.
+    Scrivi recensioni in terza persona plurale ("Abbiamo testato", "Riteniamo").
+    Il tuo output deve essere SOLO codice HTML (senza tag <html> o <body>).
+    Usa tag come <h2>, <p>, <ul>, <li>, <strong>.
     """
 
     prompt_user = f"""
-    Analizza il prodotto: {prodotto['title']} (Prezzo: {prodotto['price']}€).
+    Scrivi una recensione completa per: {prodotto['title']}
+    Prezzo: {prodotto['price']}€
+    ASIN: {prodotto['asin']}
 
-    Restituisci ESCLUSIVAMENTE un JSON valido con questa struttura:
-    {{
-        "review_content": "HTML completo dell'articolo (Intro, Analisi, Conclusioni). NON includere qui il box pro/contro o il voto, verranno aggiunti dal plugin.",
-        "final_score": 85, 
-        "pros": ["Punto di forza 1", "Punto di forza 2", "Punto di forza 3"],
-        "cons": ["Difetto 1", "Difetto 2"],
-        "meta_desc": "Meta description ottimizzata SEO (max 160 caratteri)."
-    }}
+    STRUTTURA OBBLIGATORIA (in HTML):
+    1. <h2>Introduzione</h2>: Breve e accattivante.
+    2. <h2>Caratteristiche e Prova</h2>: Analisi del prodotto.
+    3. <h2>Pro e Contro</h2>: Usa due liste HTML separate.
+       - Una lista <ul> con titolo "✅ Cosa ci piace"
+       - Una lista <ul> con titolo "❌ Cosa non ci piace"
+    4. <h2>Verdetto</h2>: Conclusione sintetica.
+    5. <h3>Voto Finale: X/10</h3> (Mettilo ben visibile in un tag <h3>).
 
-    IMPORTANTE:
-    - "final_score": Usa un numero intero da 0 a 100 (Esempio: 85, 92, 70).
-    - "review_content": Usa tag <h2>, <p>, <strong>. Sii discorsivo e professionale.
+    Non aggiungere altro testo fuori dall'HTML.
     """
 
     try:
@@ -36,10 +37,9 @@ def genera_recensione_seo(prodotto):
                 {"role": "system", "content": prompt_system},
                 {"role": "user", "content": prompt_user}
             ],
-            temperature=0.7,
-            response_format={"type": "json_object"}
+            temperature=0.7
         )
-        return response.choices[0].message.content
+        return response.choices[0].message.content.replace("```html", "").replace("```", "")
 
     except Exception as e:
         print(f"❌ Errore AI: {e}")
