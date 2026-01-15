@@ -2,7 +2,6 @@ import requests
 from bs4 import BeautifulSoup
 import mysql.connector
 import random
-import json
 import os
 
 DB_CONFIG = {
@@ -67,21 +66,24 @@ def save_to_db(data):
         conn = mysql.connector.connect(**DB_CONFIG)
         cursor = conn.cursor()
         
-        ai_content = data.get('ai_content', None)
+        ai_content = data.get('ai_content', '')
+        cat_id = data.get('category_id', 9) # Default Tecnologia se manca
 
+        # Query aggiornata con category_id
         query = """
-        INSERT INTO products (asin, title, current_price, image_url, ai_sentiment, status)
-        VALUES (%s, %s, %s, %s, %s, 'draft')
+        INSERT INTO products (asin, title, current_price, image_url, ai_sentiment, category_id, status)
+        VALUES (%s, %s, %s, %s, %s, %s, 'draft')
         ON DUPLICATE KEY UPDATE 
             current_price = VALUES(current_price), 
             title = VALUES(title),
             image_url = VALUES(image_url),
             ai_sentiment = VALUES(ai_sentiment),
+            category_id = VALUES(category_id),
             last_checked = NOW();
         """
-        cursor.execute(query, (data['asin'], data['title'], data['price'], data['image'], ai_content))
+        cursor.execute(query, (data['asin'], data['title'], data['price'], data['image'], ai_content, cat_id))
         conn.commit()
-        print("💾 Salvato nel DB!")
+        print(f"💾 Salvato nel DB (Cat ID: {cat_id})!")
     except Exception as err:
         print(f"❌ Errore DB: {err}")
     finally:

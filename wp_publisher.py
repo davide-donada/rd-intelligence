@@ -36,8 +36,6 @@ def format_article_html(product):
 
     aff_link = f"https://www.amazon.it/dp/{asin}?tag=recensionedigitale-21"
 
-    # Nota: Ho aggiunto delle classi specifiche (rd-price-tag, rd-date-tag) 
-    # per rendere facile l'aggiornamento prezzi via Regex in futuro.
     header_html = f"""
     <div style="background-color: #fff; border: 1px solid #e1e1e1; padding: 20px; margin-bottom: 30px; border-radius: 8px; display: flex; flex-wrap: wrap; gap: 20px; align-items: center;">
         <div style="flex: 1; text-align: center; min-width: 200px;">
@@ -71,7 +69,13 @@ def run_publisher():
     try:
         conn = mysql.connector.connect(**DB_CONFIG)
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM products WHERE status = 'draft'")
+        
+        # Selezioniamo tutto, assicurandoci di prendere wp_post_id e category_id
+        # ATTENZIONE: l'ordine delle colonne dipende da come sono state create.
+        # È meglio usare fetchall() e accedere per nome, ma mysql.connector standard usa tuple.
+        # Facciamo una query esplicita per non sbagliare indici.
+        query = "SELECT id, asin, title, current_price, image_url, ai_sentiment, category_id FROM products WHERE status = 'draft'"
+        cursor.execute(query)
         products = cursor.fetchall()
         
         if not products:
@@ -79,23 +83,30 @@ def run_publisher():
             return
 
         for p in products:
+            p_id = p[0]
             title = p[2]
-            print(f"   > Pubblicazione: {title[:30]}...")
+            cat_id = p[6] # Category ID è la 7^ colonna (indice 6) nella query sopra
+            
+            # Ricostruiamo una tupla "finta" compatibile con format_article_html
+            # format_article vuole: [id, asin, title, price, ... image, ai_content]
+            # Noi gli passiamo quello che serve.
+            product_data = [p[0], p[1], p[2], p[3], None, p[4], p[5]]
+
+            print(f"   > Pubblicazione: {title[:30]} in Cat ID: {cat_id}...")
 
             post_data = {
                 'title': f"Recensione: {title}",
-                'content': format_article_html(p),
-                'status': 'draft'
+                'content': format_article_html(product_data),
+                'status': 'draft',
+                'categories': [cat_id] # <--- ECCO LA MAGIA!
             }
 
             try:
                 response = requests.post(WP_URL, headers=get_headers(), json=post_data)
                 if response.status_code == 201:
-                    new_post_id = response.json()['id'] # PRENDIAMO L'ID!
+                    new_post_id = response.json()['id']
                     print(f"     ✅ Pubblicato ID: {new_post_id}")
-                    
-                    # AGGIORNIAMO IL DB CON L'ID DI WORDPRESS
-                    cursor.execute("UPDATE products SET status = 'published', wp_post_id = %s WHERE id = %s", (new_post_id, p[0]))
+                    cursor.execute("UPDATE products SET status = 'published', wp_post_id = %s WHERE id = %s", (new_post_id, p_id))
                     conn.commit()
                 else:
                     print(f"     ❌ Errore WP: {response.text}")

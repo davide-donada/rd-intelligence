@@ -1,5 +1,4 @@
 import time
-import random
 import sys
 import os
 import mysql.connector
@@ -9,12 +8,11 @@ try:
     from amazon_hunter import get_amazon_data, save_to_db
     from wp_publisher import run_publisher
     from ai_writer import genera_recensione_seo
-    from price_updater import update_prices_loop # <--- Modulo nuovi prezzi
+    from price_updater import update_prices_loop
 except ImportError as e:
     print(f"❌ ERRORE IMPORT: {e}")
     sys.exit()
 
-# --- CONFIGURAZIONE DB ---
 DB_CONFIG = {
     'user': 'root',
     'password': os.getenv('DB_PASSWORD'),
@@ -24,7 +22,6 @@ DB_CONFIG = {
 }
 
 def get_next_target():
-    """Pesca il prossimo ASIN dalla coda"""
     conn = None
     target_asin = None
     try:
@@ -37,14 +34,12 @@ def get_next_target():
             target_asin = result[0]
             cursor.execute("UPDATE hunting_list SET status = 'processing' WHERE asin = %s", (target_asin,))
             conn.commit()
-    except Exception as e:
-        print(f"⚠️ Errore lettura coda: {e}")
+    except: pass
     finally:
-        if conn and conn.is_connected(): conn.close()
+        if conn: conn.close()
     return target_asin
 
 def mark_target_status(asin, status):
-    """Aggiorna lo stato (done/error)"""
     try:
         conn = mysql.connector.connect(**DB_CONFIG)
         cursor = conn.cursor()
@@ -54,71 +49,65 @@ def mark_target_status(asin, status):
     except: pass
 
 def main_loop():
-    """Il ciclo principale che cerca nuovi prodotti"""
     print(f"\n--- 🤖 CICLO: {datetime.now().strftime('%H:%M:%S')} ---")
     
-    # 1. CERCA LAVORO
     asin = get_next_target()
     
     if not asin:
         print("💤 Coda vuota. Controllo pubblicazioni...")
-        run_publisher() # Pubblica eventuali bozze in attesa
-        return False # Ritorna False se non ha trovato nuovi ASIN
+        run_publisher()
+        return False
 
     print(f"🎯 Target: {asin}")
     
-    # 2. ESECUZIONE
     try:
         raw_data = get_amazon_data(asin)
         
         if raw_data and raw_data['title'] != "Titolo non trovato":
             if raw_data['price'] > 0:
-                print("🧠 Generazione Recensione AI...")
-                html_art = genera_recensione_seo(raw_data)
-                raw_data['ai_content'] = html_art if html_art else "<p>Errore generazione AI.</p>"
+                print("🧠 AI al lavoro...")
+                
+                # ORA RICEVIAMO UN DIZIONARIO {html_content, category_id}
+                ai_result = genera_recensione_seo(raw_data)
+                
+                # Estraiamo i dati
+                raw_data['ai_content'] = ai_result.get('html_content', '<p>Errore AI</p>')
+                raw_data['category_id'] = ai_result.get('category_id', 9) # 9 = Tecnologia
+                
             else:
                 raw_data['ai_content'] = "<p>Prodotto non disponibile.</p>"
+                raw_data['category_id'] = 1 # Uncategorized
 
             save_to_db(raw_data)
             mark_target_status(asin, 'done')
-            print(f"✅ {asin} Completato e salvato.")
+            print(f"✅ {asin} Completato (Cat: {raw_data.get('category_id')})")
         else:
-            print("⚠️ Errore Scraping (Captcha o titolo vuoto).")
+            print("⚠️ Errore Scraping.")
             mark_target_status(asin, 'error')
             
     except Exception as e:
         print(f"❌ Errore Critico: {e}")
         mark_target_status(asin, 'error')
 
-    # Piccola pausa tra un prodotto e l'altro per sicurezza
     time.sleep(10)
     return True
 
 if __name__ == "__main__":
-    print("♾️  SISTEMA ATTIVO (HUNTER + PUBLISHER + UPDATER)")
-    
+    print("♾️  SISTEMA ATTIVO (AUTO-CATEGORIE)")
     cycle_count = 0
-    
     while True:
-        # 1. Esegue il ciclo principale (Caccia + Scrittura + Pubblicazione)
         try:
             lavorato = main_loop()
         except Exception as e:
-            print(f"❌ Errore nel Main Loop: {e}")
+            print(f"Error loop: {e}")
             lavorato = False
-        
-        # 2. Ogni 10 cicli (circa ogni 10-20 minuti), controlla i prezzi dei vecchi articoli
+
         cycle_count += 1
         if cycle_count >= 10:
             print("Checking aggiornamenti prezzi...")
-            try:
-                update_prices_loop()
-            except Exception as e:
-                print(f"⚠️ Errore Updater: {e}")
-            cycle_count = 0 # Reset contatore
+            try: update_prices_loop()
+            except: pass
+            cycle_count = 0
             
-        # 3. Gestione Pausa
         if not lavorato:
-            # Se non c'era lavoro, dorme di più (60 secondi)
-            time.sleep(60) 
-        # Se ha lavorato, il loop ricomincia subito (dopo la pausa interna di 10s)
+            time.sleep(60)
