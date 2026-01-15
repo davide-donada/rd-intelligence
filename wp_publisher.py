@@ -25,7 +25,7 @@ def get_headers():
     return {
         'Authorization': f'Basic {token.decode("utf-8")}',
         'Content-Type': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+        'User-Agent': 'Mozilla/5.0'
     }
 
 def run_publisher():
@@ -52,7 +52,7 @@ def run_publisher():
             print(f"   > Elaborazione: {title[:30]}...")
 
             # 1. Parsing dati
-            score = 8.5 # Default
+            score = 80
             pros = []
             cons = []
             body_content = ""
@@ -62,8 +62,7 @@ def run_publisher():
                 if ai_data_raw:
                     ai_data = json.loads(ai_data_raw)
                     body_content = ai_data.get('review_content', '')
-                    # Prendiamo il voto grezzo (es. 8.5)
-                    score = float(ai_data.get('final_score', 8.5))
+                    score = int(ai_data.get('final_score', 80)) # Prende 85 come int
                     pros = ai_data.get('pros', [])
                     cons = ai_data.get('cons', [])
                     meta_desc = ai_data.get('meta_desc', '')
@@ -111,18 +110,18 @@ def run_publisher():
                     new_post_id = resp_post.json()['id']
                     print(f"     ✅ Post creato ID: {new_post_id}")
                     
-                    # 4. INIEZIONE DATI LET'S REVIEW
+                    # 4. CHIAMA IL NOSTRO TUNNEL PHP (FIX LET'S REVIEW)
                     meta_payload = {
                         'id': new_post_id,
-                        'score': score, # Manda 8.5, il PHP lo trasformerà in 85
-                        'pros': pros,
-                        'cons': cons
+                        'score': score, # Es. 85
+                        'pros': pros,   # Es. ["Veloce", "Bello"]
+                        'cons': cons    # Es. ["Costoso"]
                     }
                     
                     resp_meta = requests.post(f"{WP_BASE_URL}/rd-api/v1/save-review", headers=get_headers(), json=meta_payload)
                     
                     if resp_meta.status_code == 200:
-                        print(f"     ✨ Box Recensione Configurato (Design 3)!")
+                        print(f"     ✨ Let's Review Abilitato e Compilato!")
                     else:
                         print(f"     ⚠️ Errore API Custom: {resp_meta.text}")
 

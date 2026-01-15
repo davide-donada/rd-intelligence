@@ -5,29 +5,28 @@ import json
 client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 
 def genera_recensione_seo(prodotto):
-    print(f"🧠 AI: Analisi JSON per '{prodotto['title']}'...")
+    print(f"🧠 AI: Scrivo recensione per '{prodotto['title']}'...")
 
     prompt_system = """
     Sei un redattore esperto per RecensioneDigitale.it.
-    Analizza il prodotto e restituisci un JSON rigoroso.
-    Tono: Professionale, Terza persona plurale.
+    Il tuo compito è analizzare il prodotto e restituire un JSON strutturato.
     """
 
     prompt_user = f"""
-    Analizza: {prodotto['title']} (ASIN: {prodotto['asin']}, Prezzo: {prodotto['price']}€).
+    Analizza il prodotto: {prodotto['title']} (Prezzo: {prodotto['price']}€).
 
     Restituisci ESCLUSIVAMENTE un JSON valido con questa struttura:
     {{
-        "review_content": "HTML dell'articolo (Intro, Analisi, Conclusioni). NON mettere qui pro/contro o tabelle voti.",
-        "final_score": 8.5, 
-        "pros": ["Pro 1", "Pro 2", "Pro 3"],
-        "cons": ["Contro 1", "Contro 2"],
-        "meta_desc": "Meta description SEO."
+        "review_content": "HTML completo dell'articolo (Intro, Analisi, Conclusioni). NON includere qui il box pro/contro o il voto, verranno aggiunti dal plugin.",
+        "final_score": 85, 
+        "pros": ["Punto di forza 1", "Punto di forza 2", "Punto di forza 3"],
+        "cons": ["Difetto 1", "Difetto 2"],
+        "meta_desc": "Meta description ottimizzata SEO (max 160 caratteri)."
     }}
-    
-    IMPORTANTE SUL VOTO (final_score):
-    Deve essere un numero decimale da 0.0 a 10.0 (Esempio: 7.5, 8.2, 9.0).
-    NON usare la scala 100.
+
+    IMPORTANTE:
+    - "final_score": Usa un numero intero da 0 a 100 (Esempio: 85, 92, 70).
+    - "review_content": Usa tag <h2>, <p>, <strong>. Sii discorsivo e professionale.
     """
 
     try:
