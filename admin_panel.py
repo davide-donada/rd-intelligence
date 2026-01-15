@@ -1,84 +1,126 @@
 import mysql.connector
 import os
+import sys
 
-# --- CONFIGURAZIONE ---
-# Usa le stesse credenziali che hai negli altri script o scrivile qui
+# CONFIGURAZIONE (Assicurati che sia uguale agli altri script)
 DB_CONFIG = {
     'user': 'root',
-    'password': 'FfEivO8tgJSGWkxEV84g4qIVvmZgspy8lnnS3O4eHiyZdM5vPq9cVg1ZemSDKHZL', # <--- Sostituisci o usa os.getenv('DB_PASSWORD')
+    'password': 'FfEivO8tgJSGWkxEV84g4qIVvmZgspy8lnnS3O4eHiyZdM5vPq9cVg1ZemSDKHZL', # O inserisci la password tra virgolette
     'host': '80.211.135.46',
     'port': 3306,
     'database': 'recensionedigitale'
 }
 
-def get_stats(cursor):
-    """Mostra quanti lavori ci sono in coda"""
-    cursor.execute("SELECT status, COUNT(*) FROM hunting_list GROUP BY status")
-    results = cursor.fetchall()
-    print("\n📊 STATO DEL SERVER:")
-    if not results:
-        print("   (Coda vuota)")
-    for status, count in results:
-        icon = "⏳" if status == 'pending' else "⚙️" if status == 'processing' else "✅" if status == 'done' else "❌"
-        print(f"   {icon} {status.upper()}: {count}")
-    print("-" * 30)
-
-def add_asins(conn, cursor):
-    print("\n🚀 INSERIMENTO RAPIDO")
-    print("Incolla un ASIN (es. B0CLTF2L5P) o una lista separata da virgole/spazi.")
-    print("Scrivi 'exit' per uscire.")
-    
-    while True:
-        user_input = input("\n👉 Inserisci ASIN: ").strip()
-        
-        if user_input.lower() in ['exit', 'quit', 'esci']:
-            break
-        
-        if not user_input:
-            continue
-
-        # Pulizia input: gestisce virgole, spazi, invii
-        raw_asins = user_input.replace(',', ' ').split()
-        
-        added_count = 0
-        for asin in raw_asins:
-            asin = asin.strip()
-            if len(asin) < 10: # Controllo base lunghezza ASIN
-                print(f"   ⚠️ '{asin}' sembra troppo corto, salto.")
-                continue
-
-            try:
-                # Inseriamo ignorando i duplicati
-                cursor.execute("INSERT IGNORE INTO hunting_list (asin) VALUES (%s)", (asin,))
-                if cursor.rowcount > 0:
-                    print(f"   ✅ Aggiunto: {asin}")
-                    added_count += 1
-                else:
-                    print(f"   💤 Già presente: {asin}")
-            except Exception as e:
-                print(f"   ❌ Errore su {asin}: {e}")
-        
-        conn.commit()
-        if added_count > 0:
-            print(f"✨ Caricati {added_count} nuovi prodotti in coda!")
-            get_stats(cursor)
-
-def main():
-    print("🔌 Connessione al Quartier Generale...")
+def get_db_connection():
     try:
-        conn = mysql.connector.connect(**DB_CONFIG)
-        cursor = conn.cursor()
+        return mysql.connector.connect(**DB_CONFIG)
+    except Exception as e:
+        print(f"❌ Errore di connessione al DB: {e}")
+        return None
+
+def show_stats():
+    conn = get_db_connection()
+    if not conn: return
+
+    cursor = conn.cursor()
+    
+    # Conta Pending
+    cursor.execute("SELECT COUNT(*) FROM hunting_list WHERE status='pending'")
+    pending = cursor.fetchone()[0]
+    
+    # Conta Processing
+    cursor.execute("SELECT COUNT(*) FROM hunting_list WHERE status='processing'")
+    processing = cursor.fetchone()[0]
+
+    print("\n" + "="*40)
+    print(f"📊 STATO SERVER:")
+    print(f"   ⏳ In Coda (Pending):      {pending}")
+    print(f"   ⚙️  In Lavorazione (Ora):   {processing}")
+    print("="*40)
+    conn.close()
+
+def show_latest_published():
+    conn = get_db_connection()
+    if not conn: return
+    cursor = conn.cursor()
+    
+    print("\n✅ ULTIMI 5 PUBBLICATI:")
+    # Prende gli ultimi 5 con status 'published'
+    cursor.execute("SELECT asin, title, current_price, last_checked FROM products WHERE status='published' ORDER BY last_checked DESC LIMIT 5")
+    rows = cursor.fetchall()
+    
+    if not rows:
+        print("   (Nessun articolo pubblicato)")
+    else:
+        for r in rows:
+            titolo = r[1][:40] + "..." if len(r[1]) > 40 else r[1]
+            print(f"   DATE: {r[3].strftime('%H:%M')} | {r[0]} | {titolo} | € {r[2]}")
+    conn.close()
+
+def show_errors():
+    conn = get_db_connection()
+    if not conn: return
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT asin, status FROM hunting_list WHERE status='error' ORDER BY id DESC LIMIT 5")
+    rows = cursor.fetchall()
+    
+    if rows:
+        print("\n❌ ULTIMI ERRORI (Verifica questi ASIN):")
+        for r in rows:
+            print(f"   ASIN: {r[0]}")
+    conn.close()
+
+def add_asin():
+    asin = input("\n📝 Inserisci ASIN (o 'q' per uscire): ").strip()
+    if asin.lower() == 'q' or asin == "": return
+
+    conn = get_db_connection()
+    if not conn: return
+    cursor = conn.cursor()
+    
+    try:
+        # Controlla se esiste già
+        cursor.execute("SELECT status FROM hunting_list WHERE asin = %s", (asin,))
+        exists = cursor.fetchone()
         
-        get_stats(cursor)
-        add_asins(conn, cursor)
-        
-    except mysql.connector.Error as err:
-        print(f"❌ Errore di connessione: {err}")
+        if exists:
+            print(f"⚠️  ASIN {asin} è già in lista (Stato: {exists[0]}).")
+        else:
+            cursor.execute("INSERT INTO hunting_list (asin, status) VALUES (%s, 'pending')", (asin,))
+            conn.commit()
+            print(f"✅ ASIN {asin} aggiunto alla coda!")
+    except Exception as e:
+        print(f"❌ Errore: {e}")
     finally:
-        if 'conn' in locals() and conn.is_connected():
-            cursor.close()
-            conn.close()
-            print("\n👋 Connessione chiusa.")
+        conn.close()
+
+def main_menu():
+    while True:
+        # Pulisce schermo (opzionale, rimuovi se dà problemi su Windows)
+        # os.system('cls' if os.name == 'nt' else 'clear') 
+        
+        show_stats()
+        show_latest_published()
+        show_errors()
+        
+        print("\nCOMMANDI:")
+        print(" [1] Aggiungi Nuovo ASIN")
+        print(" [2] Aggiorna Vista")
+        print(" [q] Esci")
+        
+        scelta = input("\n👉 Scelta: ").strip().lower()
+        
+        if scelta == '1':
+            add_asin()
+        elif scelta == '2':
+            continue # Ricarica il loop e quindi le statistiche
+        elif scelta == 'q':
+            print("👋 Ciao Direttore.")
+            break
+        else:
+            print("Comando non valido.")
 
 if __name__ == "__main__":
-    main()
+    print("🖥️  RECENSIONE DIGITALE - CONTROL TOWER v2")
+    main_menu()
