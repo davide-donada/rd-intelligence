@@ -51,8 +51,8 @@ def run_publisher():
             
             print(f"   > Elaborazione: {title[:30]}...")
 
-            # 1. PARSING E PULIZIA DATI
-            score = 8.0
+            # 1. Parsing dati
+            score = 8.5 # Default
             pros = []
             cons = []
             body_content = ""
@@ -62,24 +62,16 @@ def run_publisher():
                 if ai_data_raw:
                     ai_data = json.loads(ai_data_raw)
                     body_content = ai_data.get('review_content', '')
-                    
-                    # Logica correzione Voto (da 85 a 8.5)
-                    raw_score = float(ai_data.get('final_score', 8.0))
-                    if raw_score > 10:
-                        score = raw_score / 10.0
-                    else:
-                        score = raw_score
-                        
+                    # Prendiamo il voto grezzo (es. 8.5)
+                    score = float(ai_data.get('final_score', 8.5))
                     pros = ai_data.get('pros', [])
                     cons = ai_data.get('cons', [])
                     meta_desc = ai_data.get('meta_desc', '')
-            except Exception as e:
-                print(f"     ⚠️ Errore JSON: {e}")
+            except:
                 body_content = ai_data_raw
 
-            # 2. CREA POST (Chiamata Standard)
+            # 2. Crea HTML
             aff_link = f"https://www.amazon.it/dp/{asin}?tag=recensionedigitale-21"
-            
             html_final = f"""
             <div style="background-color: #fff; border: 1px solid #e1e1e1; padding: 20px; margin-bottom: 30px; border-radius: 8px;">
                 <div style="display: flex; gap: 20px; align-items: center; flex-wrap: wrap;">
@@ -100,28 +92,29 @@ def run_publisher():
             </div>
             <div class="rd-review-body">{body_content}</div>
             <hr>
+            [lets_review]
             <p style="font-size: 0.7rem; color: #999; text-align: center;">RecensioneDigitale.it partecipa al Programma Affiliazione Amazon EU.</p>
             """
 
+            # 3. Pubblica Post Base
             post_data = {
                 'title': f"Recensione: {title}",
                 'content': html_final,
-                'status': 'draft', # Draft per sicurezza
+                'status': 'draft', 
                 'excerpt': meta_desc
             }
 
             try:
-                # A. Creiamo l'articolo
                 resp_post = requests.post(f"{WP_BASE_URL}/wp/v2/posts", headers=get_headers(), json=post_data)
                 
                 if resp_post.status_code == 201:
                     new_post_id = resp_post.json()['id']
                     print(f"     ✅ Post creato ID: {new_post_id}")
                     
-                    # B. INIETTIAMO I DATI LET'S REVIEW (Chiamata al Tunnel Custom)
+                    # 4. INIEZIONE DATI LET'S REVIEW
                     meta_payload = {
                         'id': new_post_id,
-                        'score': score, # Es. 8.5
+                        'score': score, # Manda 8.5, il PHP lo trasformerà in 85
                         'pros': pros,
                         'cons': cons
                     }
@@ -129,21 +122,20 @@ def run_publisher():
                     resp_meta = requests.post(f"{WP_BASE_URL}/rd-api/v1/save-review", headers=get_headers(), json=meta_payload)
                     
                     if resp_meta.status_code == 200:
-                        print(f"     ✨ Let's Review Dati salvati (Voto: {score})!")
+                        print(f"     ✨ Box Recensione Configurato (Design 3)!")
                     else:
-                        print(f"     ⚠️ Errore salvataggio Meta: {resp_meta.text}")
+                        print(f"     ⚠️ Errore API Custom: {resp_meta.text}")
 
-                    # C. Chiudiamo il lavoro
                     cursor.execute("UPDATE products SET status = 'published' WHERE id = %s", (p_id,))
                     conn.commit()
                 else:
-                    print(f"     ❌ Errore Creazione Post: {resp_post.text}")
+                    print(f"     ❌ Errore WP: {resp_post.text}")
             
             except Exception as e:
-                print(f"     ❌ Errore Network: {e}")
+                print(f"     ❌ Network Error: {e}")
 
     except Exception as err:
-        print(f"❌ Errore Gen: {err}")
+        print(f"❌ DB Error: {err}")
     finally:
         if conn: conn.close()
 
