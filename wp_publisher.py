@@ -28,16 +28,16 @@ def get_headers():
     }
 
 def format_article_html(product):
-    """Assembla il layout finale"""
     asin = product[1]
     title = product[2]
     price = product[3]
     image_url = product[5]
-    ai_content = product[6] # HTML già pronto dall'AI
+    ai_content = product[6]
 
     aff_link = f"https://www.amazon.it/dp/{asin}?tag=recensionedigitale-21"
 
-    # Box Iniziale (Immagine + Prezzo + Bottone)
+    # Nota: Ho aggiunto delle classi specifiche (rd-price-tag, rd-date-tag) 
+    # per rendere facile l'aggiornamento prezzi via Regex in futuro.
     header_html = f"""
     <div style="background-color: #fff; border: 1px solid #e1e1e1; padding: 20px; margin-bottom: 30px; border-radius: 8px; display: flex; flex-wrap: wrap; gap: 20px; align-items: center;">
         <div style="flex: 1; text-align: center; min-width: 200px;">
@@ -47,12 +47,12 @@ def format_article_html(product):
         </div>
         <div style="flex: 1.5; min-width: 250px;">
             <h2 style="margin-top: 0; font-size: 1.4rem;">{title}</h2>
-            <div style="font-size: 2rem; color: #B12704; font-weight: bold; margin: 10px 0;">€ {price}</div>
+            <div class="rd-price-box" style="font-size: 2rem; color: #B12704; font-weight: bold; margin: 10px 0;">€ <span class="rd-price-val">{price}</span></div>
             <a href="{aff_link}" rel="nofollow sponsored" target="_blank" 
                style="background-color: #ff9900; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">
                👉 Vedi Offerta su Amazon
             </a>
-            <p style="font-size: 0.8rem; color: #666; margin-top: 5px;">Prezzo aggiornato al: {datetime.now().strftime("%d/%m/%Y")}</p>
+            <p style="font-size: 0.8rem; color: #666; margin-top: 5px;">Prezzo aggiornato al: <span class="rd-date-val">{datetime.now().strftime("%d/%m/%Y")}</span></p>
         </div>
     </div>
     """
@@ -63,7 +63,6 @@ def format_article_html(product):
         RecensioneDigitale.it partecipa al Programma Affiliazione Amazon EU. Acquistando tramite i nostri link potremmo ricevere una commissione.
     </p>
     """
-
     return header_html + ai_content + footer_html
 
 def run_publisher():
@@ -86,15 +85,17 @@ def run_publisher():
             post_data = {
                 'title': f"Recensione: {title}",
                 'content': format_article_html(p),
-                'status': 'draft', # Mettilo 'publish' se ti fidi
-                # 'categories': [1] # ID categoria se lo sai
+                'status': 'draft'
             }
 
             try:
                 response = requests.post(WP_URL, headers=get_headers(), json=post_data)
                 if response.status_code == 201:
-                    print("     ✅ Pubblicato con successo!")
-                    cursor.execute("UPDATE products SET status = 'published' WHERE id = %s", (p[0],))
+                    new_post_id = response.json()['id'] # PRENDIAMO L'ID!
+                    print(f"     ✅ Pubblicato ID: {new_post_id}")
+                    
+                    # AGGIORNIAMO IL DB CON L'ID DI WORDPRESS
+                    cursor.execute("UPDATE products SET status = 'published', wp_post_id = %s WHERE id = %s", (new_post_id, p[0]))
                     conn.commit()
                 else:
                     print(f"     ❌ Errore WP: {response.text}")
