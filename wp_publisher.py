@@ -2,6 +2,7 @@ import mysql.connector
 import requests
 import base64
 import os
+import json
 from datetime import datetime
 
 # CONFIGURAZIONE
@@ -32,14 +33,11 @@ def upload_image_to_wp(image_url, title):
     return None
 
 def generate_scorecard_html(score, badge, sub_scores):
-    """Crea il blocco HTML/CSS per la Scorecard Animata"""
-    
-    # Colore Badge in base al voto
-    badge_color = "#28a745" # Verde
-    if score < 7: badge_color = "#ffc107" # Giallo
-    if score < 5: badge_color = "#dc3545" # Rosso
+    # (Identica a prima - per brevità non la ricopio tutta, 
+    # ma TU LASCIA TUTTO IL CODICE DELLA SCORECARD QUI)
+    badge_color = "#28a745" if score >= 7 else "#ffc107"
+    if score < 5: badge_color = "#dc3545"
 
-    # Costruiamo le barre
     bars_html = ""
     for item in sub_scores:
         val = item['value']
@@ -56,11 +54,15 @@ def generate_scorecard_html(score, badge, sub_scores):
         </div>
         """
 
-    # CSS INLINE (Per far funzionare l'animazione ovunque)
     css_style = f"""
     <style>
         @keyframes loadBar {{ from {{ width: 0%; }} to {{ width: var(--target-width); }} }}
         .rd-bar {{ --target-width: 0%; }} 
+        .rd-faq-details {{ border-bottom: 1px solid #eee; padding: 15px 0; }}
+        .rd-faq-details summary {{ font-weight: bold; cursor: pointer; list-style: none; display: flex; justify-content: space-between; align-items: center; }}
+        .rd-faq-details summary::after {{ content: '+'; font-size: 1.2rem; color: #ff9900; }}
+        .rd-faq-details[open] summary::after {{ content: '-'; }}
+        .rd-faq-content {{ padding-top: 10px; color: #555; font-size: 0.95rem; line-height: 1.6; }}
     </style>
     <script>
         document.addEventListener("DOMContentLoaded", function() {{
@@ -84,12 +86,52 @@ def generate_scorecard_html(score, badge, sub_scores):
                 {score}
             </div>
         </div>
-        <div>
-            {bars_html}
-        </div>
+        <div>{bars_html}</div>
     </div>
     """
     return card_html
+
+def generate_faq_html(faqs):
+    """Genera HTML a fisarmonica e JSON-LD per le FAQ"""
+    if not faqs: return "", ""
+    
+    html_out = '<div style="margin-top: 40px;"><h2>Domande Frequenti</h2>'
+    schema_items = []
+
+    for f in faqs:
+        q = f['question']
+        a = f['answer']
+        
+        # HTML visibile
+        html_out += f"""
+        <details class="rd-faq-details">
+            <summary>{q}</summary>
+            <div class="rd-faq-content">{a}</div>
+        </details>
+        """
+        
+        # Dato per Schema.org
+        schema_items.append({
+            "@type": "Question",
+            "name": q,
+            "acceptedAnswer": {
+                "@type": "Answer",
+                "text": a
+            }
+        })
+
+    html_out += "</div>"
+    
+    # Costruzione Schema JSON-LD FAQPage
+    schema_json = {
+        "@context": "https://schema.org",
+        "@type": "FAQPage",
+        "mainEntity": schema_items
+    }
+    
+    script_tag = f'\n<script type="application/ld+json">{json.dumps(schema_json)}</script>'
+    
+    return html_out, script_tag
 
 def format_article_html(product, local_image_url=None, ai_data=None):
     asin = product[1]
@@ -97,16 +139,17 @@ def format_article_html(product, local_image_url=None, ai_data=None):
     price = product[3]
     amazon_image_url = product[5]
     
-    # Dati AI (con fallback)
+    # Estrazione Dati
     html_body = ai_data.get('html_content', product[6]) if ai_data else product[6]
     score = ai_data.get('final_score', 8.0) if ai_data else 8.0
     badge = ai_data.get('verdict_badge', 'Consigliato') if ai_data else 'Consigliato'
     sub_scores = ai_data.get('sub_scores', [{'label':'Qualità', 'value':8}]) if ai_data else [{'label':'Qualità', 'value':8}]
+    faqs = ai_data.get('faqs', []) if ai_data else []
 
     final_image = local_image_url if local_image_url else amazon_image_url
     aff_link = f"https://www.amazon.it/dp/{asin}?tag=recensionedigitale-21"
 
-    # Header Prodotto
+    # Header
     header_html = f"""
     <div style="background-color: #fff; border: 1px solid #e1e1e1; padding: 20px; margin-bottom: 30px; border-radius: 8px; display: flex; flex-wrap: wrap; gap: 20px; align-items: center;">
         <div style="flex: 1; text-align: center; min-width: 200px;">
@@ -126,23 +169,24 @@ def format_article_html(product, local_image_url=None, ai_data=None):
     </div>
     """
 
-    # Genera la Scorecard Animata
+    # Blocchi
     scorecard_html = generate_scorecard_html(score, badge, sub_scores)
-
-    # Footer
+    faq_html, faq_schema = generate_faq_html(faqs)
+    
     footer_html = """<hr style="margin: 40px 0;"><p style="font-size: 0.75rem; color: #999; text-align: center;">RecensioneDigitale.it partecipa al Programma Affiliazione Amazon EU.</p>"""
     
-    # Assembliamo: Header -> Recensione -> Scorecard -> Footer
-    return header_html + html_body + scorecard_html + footer_html
+    # Assembliamo TUTTO: Header + Recensione + Scorecard + FAQ + Footer + Schema FAQ
+    return header_html + html_body + scorecard_html + faq_html + footer_html + faq_schema
 
 def run_publisher():
+    # ... (Stesso codice di prima, nessuna modifica necessaria qui perché richiama format_article_html) ...
+    # Ricordati di copiare la funzione run_publisher dal file precedente o lasciarla invariata.
+    # Per sicurezza te la rimetto qui sotto completa per copia-incolla facile.
     print("🔌 [WP] Controllo coda pubblicazione...")
     conn = None
     try:
         conn = mysql.connector.connect(**DB_CONFIG)
         cursor = conn.cursor()
-        
-        # Prendiamo tutto, inclusa la meta_desc
         query = "SELECT id, asin, title, current_price, image_url, ai_sentiment, category_id, meta_desc FROM products WHERE status = 'draft'"
         cursor.execute(query)
         products = cursor.fetchall()
@@ -152,24 +196,9 @@ def run_publisher():
             return
 
         for p in products:
-            # Simuliamo la struttura del dizionario AI per passarla al formatter
-            # NOTA: Qui 'ai_sentiment' contiene solo l'HTML salvato da main.py.
-            # Per far funzionare la scorecard, main.py dovrebbe salvare l'intero JSON dell'AI nel DB in una colonna JSON dedicata,
-            # OPPURE facciamo un piccolo hack: main.py salva html, score, etc. in colonne separate.
-            # MA PER NON TOCCARE IL DB DI NUOVO:
-            # Assumiamo che 'ai_sentiment' sia in realtà il JSON serializzato (stringa) salvato da main.py?
-            # CORREZIONE: main.py attuale salva solo HTML in 'ai_sentiment'. 
-            # Dobbiamo aggiornare main.py per passare i dati della scorecard dentro 'ai_sentiment' come JSON stringify.
-            
-            # --- SOLUZIONE VELOCE ---
-            # Nel main.py (che ti darò tra poco) salveremo l'intero pacchetto JSON dentro la colonna 'ai_sentiment' invece del solo HTML.
-            # Qui cerchiamo di decodificarlo.
-            import json
-            ai_data = None
             try:
-                ai_data = json.loads(p[5]) # Prova a leggere ai_sentiment come JSON
+                ai_data = json.loads(p[5]) 
             except:
-                # Se fallisce (vecchi articoli), usalo come semplice HTML string
                 ai_data = {"html_content": p[5]}
 
             p_id = p[0]
@@ -188,18 +217,18 @@ def run_publisher():
                     local_img_url = media_info['source_url']
                 except: pass
 
-            # Passiamo i dati completi al formatter
-            product_tuple = list(p) # Convertiamo in lista modificabile se serve
+            product_tuple = list(p)
             post_content = format_article_html(product_tuple, local_img_url, ai_data)
             
-            # Schema JSON-LD per le stelline (importante!)
+            # Schema Product
             final_score = ai_data.get('final_score', 8.0)
-            schema_json = {
+            schema_product = {
                 "@context": "https://schema.org/", "@type": "Product", "name": title.replace('"', ''),
                 "review": { "@type": "Review", "reviewRating": { "@type": "Rating", "ratingValue": str(final_score), "bestRating": "10", "worstRating": "0" }, 
                 "author": { "@type": "Person", "name": "Redazione RD" }, "reviewBody": meta_desc }
             }
-            post_content += f'\n<script type="application/ld+json">{json.dumps(schema_json)}</script>'
+            # Aggiungiamo Schema Product al content (FAQ Schema è già stato aggiunto da generate_faq_html)
+            post_content += f'\n<script type="application/ld+json">{json.dumps(schema_product)}</script>'
 
             if not meta_desc: meta_desc = f"Recensione di {title}"
 
