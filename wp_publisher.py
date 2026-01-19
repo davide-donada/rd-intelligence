@@ -17,6 +17,7 @@ DB_CONFIG = {
 WP_API_URL = "https://www.recensionedigitale.it/wp-json/wp/v2"
 WP_USER = os.getenv('WP_USER', 'davide')
 WP_APP_PASSWORD = os.getenv('WP_PASSWORD')
+WP_AUTHOR_ID = os.getenv('WP_AUTHOR_ID') # ID Autore forzato (opzionale)
 
 def get_headers():
     if not WP_APP_PASSWORD: return {}
@@ -38,7 +39,6 @@ def upload_image_to_wp(image_url, title):
         
         filename = f"{title.replace(' ', '-').lower()[:50]}.jpg"
         
-        # Headers specifici per l'upload media
         credentials = f"{WP_USER}:{WP_APP_PASSWORD}"
         token = base64.b64encode(credentials.encode())
         media_headers = {
@@ -55,7 +55,7 @@ def upload_image_to_wp(image_url, title):
     return None
 
 def generate_scorecard_html(score, badge, sub_scores):
-    """Genera HTML e CSS per la Scorecard Animata"""
+    """Genera HTML e CSS per la Scorecard Animata + CSS FAQ Blindato"""
     badge_color = "#28a745" # Verde
     if score < 7: badge_color = "#ffc107" # Giallo
     if score < 5: badge_color = "#dc3545" # Rosso
@@ -76,15 +76,48 @@ def generate_scorecard_html(score, badge, sub_scores):
         </div>
         """
 
+    # CSS con !important per forzare lo stile anche se il tema si oppone
     css_style = f"""
     <style>
         @keyframes loadBar {{ from {{ width: 0%; }} to {{ width: var(--target-width); }} }}
         .rd-bar {{ --target-width: 0%; }} 
-        .rd-faq-details {{ border-bottom: 1px solid #eee; padding: 15px 0; }}
-        .rd-faq-details summary {{ font-weight: bold; cursor: pointer; list-style: none; display: flex; justify-content: space-between; align-items: center; }}
-        .rd-faq-details summary::after {{ content: '+'; font-size: 1.2rem; color: #ff9900; }}
-        .rd-faq-details[open] summary::after {{ content: '-'; }}
-        .rd-faq-content {{ padding-top: 10px; color: #555; font-size: 0.95rem; line-height: 1.6; }}
+        
+        /* Stili FAQ Forzati */
+        .rd-faq-details {{ 
+            border-bottom: 1px solid #eee !important; 
+            padding: 15px 0 !important; 
+            margin: 0 !important;
+        }}
+        .rd-faq-details summary {{ 
+            font-weight: 700 !important;
+            cursor: pointer !important; 
+            list-style: none !important; 
+            display: flex !important; 
+            justify-content: space-between !important; 
+            align-items: center !important;
+            font-size: 1.1rem !important;
+            color: #222 !important;
+            outline: none !important;
+            background: none !important;
+        }}
+        .rd-faq-details summary::-webkit-details-marker {{ display: none !important; }}
+        
+        .rd-faq-details summary::after {{ 
+            content: '+' !important; 
+            font-size: 1.5rem !important; 
+            color: #ff9900 !important; 
+            font-weight: 300 !important;
+        }}
+        .rd-faq-details[open] summary::after {{ 
+            content: '-' !important; 
+            color: #B12704 !important;
+        }}
+        .rd-faq-content {{ 
+            padding-top: 15px !important; 
+            color: #555 !important; 
+            font-size: 0.95rem !important; 
+            line-height: 1.6 !important; 
+        }}
     </style>
     <script>
         document.addEventListener("DOMContentLoaded", function() {{
@@ -113,7 +146,7 @@ def generate_scorecard_html(score, badge, sub_scores):
     """
 
 def generate_faq_html(faqs):
-    """Genera Accordion HTML e JSON-LD Schema per le FAQ"""
+    """Genera Accordion HTML con Stile Inline e JSON-LD Schema"""
     if not faqs: return "", ""
     
     html_out = '<div style="margin-top: 40px;"><h2>Domande Frequenti</h2>'
@@ -122,9 +155,10 @@ def generate_faq_html(faqs):
     for f in faqs:
         q = f['question']
         a = f['answer']
+        # Stile Inline aggiunto per sicurezza massima contro il tema
         html_out += f"""
         <details class="rd-faq-details">
-            <summary>{q}</summary>
+            <summary style="font-weight: bold; font-size: 1.1rem; cursor: pointer;">{q}</summary>
             <div class="rd-faq-content">{a}</div>
         </details>
         """
@@ -135,8 +169,6 @@ def generate_faq_html(faqs):
         })
 
     html_out += "</div>"
-    
-    # JSON-LD Schema per FAQPage
     schema_json = {"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": schema_items}
     script_tag = f'\n<script type="application/ld+json">{json.dumps(schema_json)}</script>'
     
@@ -215,7 +247,6 @@ def run_publisher():
         conn = mysql.connector.connect(**DB_CONFIG)
         cursor = conn.cursor()
         
-        # Query che prende tutto
         query = "SELECT id, asin, title, current_price, image_url, ai_sentiment, category_id, meta_desc FROM products WHERE status = 'draft'"
         cursor.execute(query)
         products = cursor.fetchall()
@@ -226,7 +257,6 @@ def run_publisher():
 
         for p in products:
             try:
-                # Decodifica JSON dell'AI
                 ai_data = json.loads(p[5]) 
             except:
                 ai_data = {"html_content": p[5]}
@@ -239,7 +269,7 @@ def run_publisher():
 
             print(f"   > Pubblicazione: {title[:30]}...")
 
-            # 1. Carica Immagine
+            # Caricamento Media
             media_id = upload_image_to_wp(amazon_img, title)
             local_img_url = None
             if media_id:
@@ -248,11 +278,11 @@ def run_publisher():
                     local_img_url = media_info['source_url']
                 except: pass
 
-            # 2. Genera HTML Completo
+            # Formattazione
             product_tuple = list(p)
             post_content = format_article_html(product_tuple, local_img_url, ai_data)
             
-            # 3. Genera Schema Product (Stelline)
+            # Schema Product (JSON-LD)
             final_score = ai_data.get('final_score', 8.0)
             schema_product = {
                 "@context": "https://schema.org/", "@type": "Product", "name": title.replace('"', ''),
@@ -263,15 +293,20 @@ def run_publisher():
 
             if not meta_desc: meta_desc = f"Recensione di {title}"
 
-            # 4. Invia a WordPress
+            # Payload WP
             post_data = {
                 'title': f"Recensione: {title}",
                 'content': post_content,
-                'status': 'draft', # O 'publish' se ti fidi
+                'status': 'draft', 
                 'categories': [cat_id],
                 'featured_media': media_id if media_id else 0,
                 'excerpt': meta_desc
             }
+
+            # --- Forzatura Autore ---
+            if WP_AUTHOR_ID:
+                post_data['author'] = int(WP_AUTHOR_ID)
+                print(f"     👤 Forzatura Autore ID: {WP_AUTHOR_ID}")
 
             try:
                 response = requests.post(f"{WP_API_URL}/posts", headers=get_headers(), json=post_data)
