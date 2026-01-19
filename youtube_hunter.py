@@ -4,46 +4,66 @@ import urllib.parse
 
 def clean_amazon_title(title):
     """
-    Estrae le parole chiave vitali dal titolo Amazon per evitare errori.
-    Prende: La prima parola (Marca) + Qualsiasi parola che contiene numeri (Modello).
+    Costruisce una query YouTube a prova di bomba.
+    Logica:
+    1. Prende le prime 6 parole (per catturare "Mambo", "Conga", "Galaxy").
+    2. Cerca nel resto del titolo codici modello (es. "11090").
+    3. Scarta unità di misura che confondono (es. "1600W").
     """
-    words = title.replace("-", " ").replace("/", " ").split()
+    # Pulizia base caratteri
+    clean_t = title.replace("-", " ").replace("/", " ").replace(",", " ").replace("|", " ")
+    words = clean_t.split()
     
-    # 1. La Marca (quasi sempre la prima parola)
-    brand = words[0] if words else ""
-    
-    # 2. Il Modello (parole che contengono almeno un numero)
-    # Es: "11090", "S23", "iPhone15", "RX7600"
-    model_keywords = [w for w in words if any(char.isdigit() for char in w)]
-    
-    # Filtriamo numeri inutili (es. "2024", "1080p", "5000mAh" se vogliamo essere perfezionisti, 
-    # ma per ora teniamo tutto, meglio un dato in più che uno in meno)
-    # Rimuoviamo duplicati mantenendo l'ordine
-    seen = set()
-    model_keywords = [x for x in model_keywords if not (x in seen or seen.add(x))]
+    if not words: return ""
 
-    # Se non abbiamo trovato numeri (es. "Magic Mouse"), usiamo le prime 4 parole come fallback
-    if not model_keywords:
-        return " ".join(words[:4])
+    # 1. LA TESTA: Le prime 6 parole sono sacre.
+    # Includono Marca + Famiglia Prodotto (es. "Cecotec Robot Cucina Multifunzione Mambo")
+    head_words = words[:6]
     
-    # Costruiamo la query chirurgica: "Cecotec 11090"
-    # Aggiungiamo anche la seconda parola del titolo se non contiene numeri, spesso aiuta (es. "Samsung Galaxy")
-    secondary = ""
-    if len(words) > 1 and not any(char.isdigit() for char in words[1]):
-        secondary = words[1]
+    # 2. LA CODA: Cerchiamo numeri nel resto del titolo
+    tail_numbers = []
+    
+    # Unità di misura da ignorare se attaccate a un numero
+    ignored_units = ['w', 'v', 'hz', 'mah', 'gr', 'kg', 'ml', 'l', 'pack', 'pz']
+    
+    for w in words[6:]:
+        # Se la parola contiene un numero
+        if any(char.isdigit() for char in w):
+            w_lower = w.lower()
+            
+            # Controllo se è un'unità di misura (es. 1600W finisce con 'w')
+            is_unit = False
+            for unit in ignored_units:
+                if w_lower.endswith(unit) and len(w_lower) > len(unit):
+                    # Controllo semplice: se tolgo l'unità resta un numero? (es. 1600W -> 1600)
+                    part_without_unit = w_lower.replace(unit, "")
+                    if part_without_unit.isdigit():
+                        is_unit = True
+                        break
+            
+            # Se NON è un'unità di misura (o se è un codice misto tipo S23), lo teniamo
+            if not is_unit:
+                tail_numbers.append(w)
 
-    query = f"{brand} {secondary} {' '.join(model_keywords)}"
-    return query
+    # 3. UNIONE
+    # Uniamo Testa + Numeri trovati
+    query_words = head_words + tail_numbers
+    
+    # Limitiamo a 10 parole totali per non far impazzire YouTube
+    final_query = " ".join(query_words[:10])
+    
+    return final_query
 
 def find_video_review(product_title):
     """
-    Cerca una recensione su YouTube usando la Smart Query.
+    Cerca una recensione su YouTube usando la logica 'Head + Tail'.
     """
     
-    # 1. Pulizia Intelligente
+    # 1. Genera Query Intelligente
     smart_query = clean_amazon_title(product_title)
     search_term = f"{smart_query} recensione ita"
     
+    # Codifica URL
     query_string = urllib.parse.quote(search_term)
     url = f"https://www.youtube.com/results?search_query={query_string}"
     
@@ -58,33 +78,30 @@ def find_video_review(product_title):
         response = requests.get(url, headers=headers)
         
         if response.status_code != 200:
-            print(f"     ⚠️ YouTube ha risposto: {response.status_code}")
+            print(f"     ⚠️ YouTube Status: {response.status_code}")
             return None
             
         html = response.text
         
-        # 2. Caccia all'ID con Regex
-        # Cerchiamo il primo video ID nei risultati
+        # 2. Regex per trovare ID video
         video_ids = re.findall(r'"videoId":"(\w{11})"', html)
         
         if video_ids:
-            # Prendiamo il primo risultato
-            first_video = video_ids[0]
-            print(f"     ✅ Trovato video ID: {first_video}")
-            return first_video
+            print(f"     ✅ Trovato video ID: {video_ids[0]}")
+            return video_ids[0]
         else:
             print("     ❌ Nessun video trovato.")
             return None
             
     except Exception as e:
-        print(f"     ⚠️ Errore ricerca: {e}")
+        print(f"     ⚠️ Errore: {e}")
         return None
 
 if __name__ == "__main__":
-    # Testiamo proprio il caso che falliva
-    titolo_difficile = "Cecotec Robot Aspirapolvere Lavapavimenti Laser Conga 11090 Spin Revolution Home&Wash"
-    print(find_video_review(titolo_difficile))
+    # TEST CRITICO: Il tuo caso specifico
+    mambo = "Cecotec Robot di Cucina Multifunzione Mambo 11090, 1600 W, 37 Funzioni"
+    print(f"\nTEST MAMBO (Cucina): {find_video_review(mambo)}")
     
-    # Testiamo un classico
-    titolo_facile = "Samsung Galaxy S23 Ultra Smartphone Android"
-    print(find_video_review(titolo_facile))
+    # TEST CONGA (Aspirapolvere)
+    conga = "Cecotec Robot Aspirapolvere Lavapavimenti Laser Conga 11090 Spin Revolution"
+    print(f"\nTEST CONGA (Pulizia): {find_video_review(conga)}")
