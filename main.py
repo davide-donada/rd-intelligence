@@ -2,7 +2,7 @@ import time
 import sys
 import os
 import mysql.connector
-import json # Importante
+import json 
 from datetime import datetime
 
 try:
@@ -10,6 +10,7 @@ try:
     from wp_publisher import run_publisher
     from ai_writer import genera_recensione_seo
     from price_updater import update_prices_loop
+    from youtube_hunter import find_video_review # <--- NUOVO IMPORT
 except ImportError as e:
     print(f"❌ ERRORE IMPORT: {e}")
     sys.exit()
@@ -19,32 +20,25 @@ DB_CONFIG = {
     'host': os.getenv('DB_HOST', '80.211.135.46'), 'port': 3306, 'database': 'recensionedigitale'
 }
 
+# ... (Le funzioni get_next_target e mark_target_status rimangono UGUALI a prima) ...
 def get_next_target():
-    # ... (Copia la funzione get_next_target identica a prima) ...
-    conn = None
-    target_asin = None
+    conn = None; target_asin = None
     try:
-        conn = mysql.connector.connect(**DB_CONFIG)
-        cursor = conn.cursor()
+        conn = mysql.connector.connect(**DB_CONFIG); cursor = conn.cursor()
         cursor.execute("SELECT asin FROM hunting_list WHERE status = 'pending' LIMIT 1")
         result = cursor.fetchone()
         if result:
             target_asin = result[0]
-            cursor.execute("UPDATE hunting_list SET status = 'processing' WHERE asin = %s", (target_asin,))
-            conn.commit()
+            cursor.execute("UPDATE hunting_list SET status = 'processing' WHERE asin = %s", (target_asin,)); conn.commit()
     except: pass
     finally:
         if conn: conn.close()
     return target_asin
 
 def mark_target_status(asin, status):
-    # ... (Copia identica a prima) ...
     try:
-        conn = mysql.connector.connect(**DB_CONFIG)
-        cursor = conn.cursor()
-        cursor.execute("UPDATE hunting_list SET status = %s WHERE asin = %s", (status, asin))
-        conn.commit()
-        conn.close()
+        conn = mysql.connector.connect(**DB_CONFIG); cursor = conn.cursor()
+        cursor.execute("UPDATE hunting_list SET status = %s WHERE asin = %s", (status, asin)); conn.commit(); conn.close()
     except: pass
 
 def main_loop():
@@ -62,20 +56,23 @@ def main_loop():
         
         if raw_data and raw_data['title'] != "Titolo non trovato":
             if raw_data['price'] > 0:
-                print("🧠 AI Scorecard System...")
+                print("🧠 Generazione Contenuti (AI + Video)...")
                 
+                # 1. AI WRITER
                 ai_result = genera_recensione_seo(raw_data)
                 
-                # --- MODIFICA CRUCIALE ---
-                # Salviamo TUTTO il JSON come stringa nella colonna ai_sentiment
-                # Così il publisher avrà accesso ai sub_scores, verdict, ecc.
-                raw_data['ai_content'] = json.dumps(ai_result) 
+                # 2. YOUTUBE HUNTER (Nuovo!) 🎥
+                video_id = find_video_review(raw_data['title'])
+                if video_id:
+                    ai_result['video_id'] = video_id # Aggiungiamo l'ID al pacchetto JSON
+                
+                # 3. SALVATAGGIO
+                raw_data['ai_content'] = json.dumps(ai_result) # Salviamo tutto il pacchetto
                 
                 raw_data['category_id'] = ai_result.get('category_id', 9)
                 raw_data['meta_desc'] = ai_result.get('meta_description', '')
                 
             else:
-                # Caso prodotto non disponibile
                 fallback = {"html_content": "<p>Prodotto non disponibile.</p>"}
                 raw_data['ai_content'] = json.dumps(fallback)
                 raw_data['category_id'] = 1
@@ -83,7 +80,7 @@ def main_loop():
 
             save_to_db(raw_data)
             mark_target_status(asin, 'done')
-            print(f"✅ {asin} Completato.")
+            print(f"✅ {asin} Completato (Video: {'SI' if video_id else 'NO'}).")
         else:
             print("⚠️ Errore Scraping.")
             mark_target_status(asin, 'error')
@@ -96,7 +93,7 @@ def main_loop():
     return True
 
 if __name__ == "__main__":
-    print("♾️  SISTEMA ATTIVO (WOW EDITION 🌟)")
+    print("♾️  SISTEMA ATTIVO (VIDEO EDITION 🎥)")
     cycle_count = 0
     while True:
         try: lavorato = main_loop()
