@@ -6,52 +6,107 @@ from datetime import datetime
 
 # CONFIGURAZIONE
 DB_CONFIG = {
-    'user': 'root',
-    'password': os.getenv('DB_PASSWORD'),
-    'host': os.getenv('DB_HOST', '80.211.135.46'),
-    'port': 3306,
-    'database': 'recensionedigitale'
+    'user': 'root', 'password': os.getenv('DB_PASSWORD'),
+    'host': os.getenv('DB_HOST', '80.211.135.46'), 'port': 3306, 'database': 'recensionedigitale'
 }
-
 WP_API_URL = "https://www.recensionedigitale.it/wp-json/wp/v2"
 WP_USER = os.getenv('WP_USER', 'davide')
 WP_APP_PASSWORD = os.getenv('WP_PASSWORD')
 
 def get_headers():
-    if not WP_APP_PASSWORD: return {}
     credentials = f"{WP_USER}:{WP_APP_PASSWORD}"
     token = base64.b64encode(credentials.encode())
-    return {
-        'Authorization': f'Basic {token.decode("utf-8")}',
-        'Content-Type': 'application/json',
-        'User-Agent': 'Mozilla/5.0'
-    }
+    return {'Authorization': f'Basic {token.decode("utf-8")}', 'Content-Type': 'application/json'}
 
 def upload_image_to_wp(image_url, title):
     if not image_url: return None
-    print(f"   📸 Scarico immagine: {title[:20]}...")
     try:
         img_resp = requests.get(image_url, headers={'User-Agent': 'Mozilla/5.0'})
         if img_resp.status_code != 200: return None
-        image_data = img_resp.content
         filename = f"{title.replace(' ', '-').lower()[:50]}.jpg"
-        credentials = f"{WP_USER}:{WP_APP_PASSWORD}"
-        token = base64.b64encode(credentials.encode())
-        media_headers = {'Authorization': f'Basic {token.decode("utf-8")}', 'Content-Disposition': f'attachment; filename={filename}', 'Content-Type': 'image/jpeg'}
-        wp_resp = requests.post(f"{WP_API_URL}/media", headers=media_headers, data=image_data)
+        token = base64.b64encode(f"{WP_USER}:{WP_APP_PASSWORD}".encode())
+        headers = {'Authorization': f'Basic {token.decode("utf-8")}', 'Content-Disposition': f'attachment; filename={filename}', 'Content-Type': 'image/jpeg'}
+        wp_resp = requests.post(f"{WP_API_URL}/media", headers=headers, data=img_resp.content)
         if wp_resp.status_code == 201: return wp_resp.json()['id']
     except: pass
     return None
 
-def format_article_html(product, local_image_url=None):
+def generate_scorecard_html(score, badge, sub_scores):
+    """Crea il blocco HTML/CSS per la Scorecard Animata"""
+    
+    # Colore Badge in base al voto
+    badge_color = "#28a745" # Verde
+    if score < 7: badge_color = "#ffc107" # Giallo
+    if score < 5: badge_color = "#dc3545" # Rosso
+
+    # Costruiamo le barre
+    bars_html = ""
+    for item in sub_scores:
+        val = item['value']
+        percent = val * 10
+        bars_html += f"""
+        <div style="margin-bottom: 10px;">
+            <div style="display:flex; justify-content:space-between; font-size:0.9rem; font-weight:600; margin-bottom:5px;">
+                <span>{item['label']}</span>
+                <span>{val}/10</span>
+            </div>
+            <div style="background:#eee; border-radius:10px; height:10px; width:100%; overflow:hidden;">
+                <div class="rd-bar" style="width:0%; height:100%; background: linear-gradient(90deg, {badge_color} 0%, {badge_color}aa 100%); border-radius:10px; animation: loadBar 1.5s ease-out forwards;" data-width="{percent}%"></div>
+            </div>
+        </div>
+        """
+
+    # CSS INLINE (Per far funzionare l'animazione ovunque)
+    css_style = f"""
+    <style>
+        @keyframes loadBar {{ from {{ width: 0%; }} to {{ width: var(--target-width); }} }}
+        .rd-bar {{ --target-width: 0%; }} 
+    </style>
+    <script>
+        document.addEventListener("DOMContentLoaded", function() {{
+            var bars = document.querySelectorAll('.rd-bar');
+            bars.forEach(function(bar) {{
+                bar.style.setProperty('--target-width', bar.getAttribute('data-width'));
+            }});
+        }});
+    </script>
+    """
+
+    card_html = f"""
+    {css_style}
+    <div style="background: #fdfdfd; border: 1px solid #eee; border-radius: 12px; padding: 25px; margin: 30px 0; box-shadow: 0 5px 15px rgba(0,0,0,0.05);">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; border-bottom:1px solid #eee; padding-bottom:15px;">
+            <div>
+                <span style="background:{badge_color}; color:white; padding:5px 10px; border-radius:5px; font-weight:bold; text-transform:uppercase; font-size:0.8rem; letter-spacing:1px;">{badge}</span>
+                <h3 style="margin: 10px 0 0 0; font-size: 1.5rem;">Verdetto Finale</h3>
+            </div>
+            <div style="background:{badge_color}1a; color:{badge_color}; width:70px; height:70px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:1.8rem; font-weight:bold; border: 2px solid {badge_color};">
+                {score}
+            </div>
+        </div>
+        <div>
+            {bars_html}
+        </div>
+    </div>
+    """
+    return card_html
+
+def format_article_html(product, local_image_url=None, ai_data=None):
     asin = product[1]
     title = product[2]
     price = product[3]
     amazon_image_url = product[5]
-    ai_content = product[6]
+    
+    # Dati AI (con fallback)
+    html_body = ai_data.get('html_content', product[6]) if ai_data else product[6]
+    score = ai_data.get('final_score', 8.0) if ai_data else 8.0
+    badge = ai_data.get('verdict_badge', 'Consigliato') if ai_data else 'Consigliato'
+    sub_scores = ai_data.get('sub_scores', [{'label':'Qualità', 'value':8}]) if ai_data else [{'label':'Qualità', 'value':8}]
+
     final_image = local_image_url if local_image_url else amazon_image_url
     aff_link = f"https://www.amazon.it/dp/{asin}?tag=recensionedigitale-21"
 
+    # Header Prodotto
     header_html = f"""
     <div style="background-color: #fff; border: 1px solid #e1e1e1; padding: 20px; margin-bottom: 30px; border-radius: 8px; display: flex; flex-wrap: wrap; gap: 20px; align-items: center;">
         <div style="flex: 1; text-align: center; min-width: 200px;">
@@ -70,8 +125,15 @@ def format_article_html(product, local_image_url=None):
         </div>
     </div>
     """
+
+    # Genera la Scorecard Animata
+    scorecard_html = generate_scorecard_html(score, badge, sub_scores)
+
+    # Footer
     footer_html = """<hr style="margin: 40px 0;"><p style="font-size: 0.75rem; color: #999; text-align: center;">RecensioneDigitale.it partecipa al Programma Affiliazione Amazon EU.</p>"""
-    return header_html + ai_content + footer_html
+    
+    # Assembliamo: Header -> Recensione -> Scorecard -> Footer
+    return header_html + html_body + scorecard_html + footer_html
 
 def run_publisher():
     print("🔌 [WP] Controllo coda pubblicazione...")
@@ -80,7 +142,7 @@ def run_publisher():
         conn = mysql.connector.connect(**DB_CONFIG)
         cursor = conn.cursor()
         
-        # SELECT con la nuova colonna meta_desc alla fine (indice 7)
+        # Prendiamo tutto, inclusa la meta_desc
         query = "SELECT id, asin, title, current_price, image_url, ai_sentiment, category_id, meta_desc FROM products WHERE status = 'draft'"
         cursor.execute(query)
         products = cursor.fetchall()
@@ -90,16 +152,31 @@ def run_publisher():
             return
 
         for p in products:
+            # Simuliamo la struttura del dizionario AI per passarla al formatter
+            # NOTA: Qui 'ai_sentiment' contiene solo l'HTML salvato da main.py.
+            # Per far funzionare la scorecard, main.py dovrebbe salvare l'intero JSON dell'AI nel DB in una colonna JSON dedicata,
+            # OPPURE facciamo un piccolo hack: main.py salva html, score, etc. in colonne separate.
+            # MA PER NON TOCCARE IL DB DI NUOVO:
+            # Assumiamo che 'ai_sentiment' sia in realtà il JSON serializzato (stringa) salvato da main.py?
+            # CORREZIONE: main.py attuale salva solo HTML in 'ai_sentiment'. 
+            # Dobbiamo aggiornare main.py per passare i dati della scorecard dentro 'ai_sentiment' come JSON stringify.
+            
+            # --- SOLUZIONE VELOCE ---
+            # Nel main.py (che ti darò tra poco) salveremo l'intero pacchetto JSON dentro la colonna 'ai_sentiment' invece del solo HTML.
+            # Qui cerchiamo di decodificarlo.
+            import json
+            ai_data = None
+            try:
+                ai_data = json.loads(p[5]) # Prova a leggere ai_sentiment come JSON
+            except:
+                # Se fallisce (vecchi articoli), usalo come semplice HTML string
+                ai_data = {"html_content": p[5]}
+
             p_id = p[0]
             title = p[2]
             amazon_img = p[4]
-            html_content = p[5]
             cat_id = p[6]
-            meta_desc = p[7] # <--- ECCOLA!
-            
-            # Fallback se la meta description è vuota
-            if not meta_desc or len(meta_desc) < 10:
-                meta_desc = f"Recensione completa di {title}. Scopri caratteristiche, pro e contro e prezzo aggiornato."
+            meta_desc = p[7]
 
             print(f"   > Pubblicazione: {title[:30]}...")
 
@@ -111,8 +188,20 @@ def run_publisher():
                     local_img_url = media_info['source_url']
                 except: pass
 
-            product_data = [p[0], p[1], p[2], p[3], None, amazon_img, html_content]
-            post_content = format_article_html(product_data, local_img_url)
+            # Passiamo i dati completi al formatter
+            product_tuple = list(p) # Convertiamo in lista modificabile se serve
+            post_content = format_article_html(product_tuple, local_img_url, ai_data)
+            
+            # Schema JSON-LD per le stelline (importante!)
+            final_score = ai_data.get('final_score', 8.0)
+            schema_json = {
+                "@context": "https://schema.org/", "@type": "Product", "name": title.replace('"', ''),
+                "review": { "@type": "Review", "reviewRating": { "@type": "Rating", "ratingValue": str(final_score), "bestRating": "10", "worstRating": "0" }, 
+                "author": { "@type": "Person", "name": "Redazione RD" }, "reviewBody": meta_desc }
+            }
+            post_content += f'\n<script type="application/ld+json">{json.dumps(schema_json)}</script>'
+
+            if not meta_desc: meta_desc = f"Recensione di {title}"
 
             post_data = {
                 'title': f"Recensione: {title}",
@@ -120,15 +209,14 @@ def run_publisher():
                 'status': 'draft',
                 'categories': [cat_id],
                 'featured_media': media_id if media_id else 0,
-                'excerpt': meta_desc # <--- INSERITA IN WORDPRESS
+                'excerpt': meta_desc
             }
 
             try:
                 response = requests.post(f"{WP_API_URL}/posts", headers=get_headers(), json=post_data)
                 if response.status_code == 201:
-                    new_post_id = response.json()['id']
-                    print(f"     ✅ Pubblicato ID: {new_post_id}")
-                    cursor.execute("UPDATE products SET status = 'published', wp_post_id = %s WHERE id = %s", (new_post_id, p_id))
+                    print(f"     ✅ Pubblicato ID: {response.json()['id']}")
+                    cursor.execute("UPDATE products SET status = 'published', wp_post_id = %s WHERE id = %s", (response.json()['id'], p_id))
                     conn.commit()
                 else:
                     print(f"     ❌ Errore WP: {response.text}")
