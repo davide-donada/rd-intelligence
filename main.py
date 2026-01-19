@@ -29,7 +29,6 @@ def get_next_target():
         cursor = conn.cursor()
         cursor.execute("SELECT asin FROM hunting_list WHERE status = 'pending' LIMIT 1")
         result = cursor.fetchone()
-        
         if result:
             target_asin = result[0]
             cursor.execute("UPDATE hunting_list SET status = 'processing' WHERE asin = %s", (target_asin,))
@@ -50,7 +49,6 @@ def mark_target_status(asin, status):
 
 def main_loop():
     print(f"\n--- 🤖 CICLO: {datetime.now().strftime('%H:%M:%S')} ---")
-    
     asin = get_next_target()
     
     if not asin:
@@ -59,28 +57,28 @@ def main_loop():
         return False
 
     print(f"🎯 Target: {asin}")
-    
     try:
         raw_data = get_amazon_data(asin)
         
         if raw_data and raw_data['title'] != "Titolo non trovato":
             if raw_data['price'] > 0:
-                print("🧠 AI al lavoro...")
+                print("🧠 AI SEO al lavoro...")
                 
-                # ORA RICEVIAMO UN DIZIONARIO {html_content, category_id}
                 ai_result = genera_recensione_seo(raw_data)
                 
-                # Estraiamo i dati
+                # ESTRAZIONE COMPLETA
                 raw_data['ai_content'] = ai_result.get('html_content', '<p>Errore AI</p>')
-                raw_data['category_id'] = ai_result.get('category_id', 9) # 9 = Tecnologia
+                raw_data['category_id'] = ai_result.get('category_id', 9)
+                raw_data['meta_desc'] = ai_result.get('meta_description', '') # <--- PRESA!
                 
             else:
                 raw_data['ai_content'] = "<p>Prodotto non disponibile.</p>"
-                raw_data['category_id'] = 1 # Uncategorized
+                raw_data['category_id'] = 1
+                raw_data['meta_desc'] = ""
 
             save_to_db(raw_data)
             mark_target_status(asin, 'done')
-            print(f"✅ {asin} Completato (Cat: {raw_data.get('category_id')})")
+            print(f"✅ {asin} Completato.")
         else:
             print("⚠️ Errore Scraping.")
             mark_target_status(asin, 'error')
@@ -93,15 +91,12 @@ def main_loop():
     return True
 
 if __name__ == "__main__":
-    print("♾️  SISTEMA ATTIVO (AUTO-CATEGORIE)")
+    print("♾️  SISTEMA COMPLETO (SEO EDITION)")
     cycle_count = 0
     while True:
-        try:
-            lavorato = main_loop()
-        except Exception as e:
-            print(f"Error loop: {e}")
-            lavorato = False
-
+        try: lavorato = main_loop()
+        except: lavorato = False
+        
         cycle_count += 1
         if cycle_count >= 10:
             print("Checking aggiornamenti prezzi...")
@@ -109,5 +104,4 @@ if __name__ == "__main__":
             except: pass
             cycle_count = 0
             
-        if not lavorato:
-            time.sleep(60)
+        if not lavorato: time.sleep(60)
