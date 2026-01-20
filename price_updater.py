@@ -27,7 +27,6 @@ def get_amazon_price(asin):
         if response.status_code != 200: return None
         
         soup = BeautifulSoup(response.content, "html.parser")
-        
         price_whole = soup.find('span', {'class': 'a-price-whole'})
         price_fraction = soup.find('span', {'class': 'a-price-fraction'})
         
@@ -41,7 +40,7 @@ def get_amazon_price(asin):
     return None
 
 def update_prices_loop():
-    print("📉 AVVIO MONITORAGGIO PREZZI (Con Storico)...")
+    print("📉 AVVIO MONITORAGGIO PREZZI (Smart History)...")
     
     conn = None
     try:
@@ -56,30 +55,33 @@ def update_prices_loop():
         
         for p in products:
             p_id, asin, title, old_price = p
-            print(f"   > Controllo: {asin} - {title[:20]}...")
+            # Convertiamo old_price in float per sicurezza (dal DB arriva come Decimal o float)
+            old_price = float(old_price) if old_price else 0.0
+            
+            # print(f"   > Controllo: {asin}...") # Decommenta per debug verboso
             
             new_price = get_amazon_price(asin)
             
             if new_price and new_price > 0:
-                # 1. Aggiorna Tabella Principale
+                # 1. Aggiorna SEMPRE il prezzo corrente sul sito (per averlo fresco in homepage)
                 cursor.execute("UPDATE products SET current_price = %s, last_update = NOW() WHERE id = %s", (new_price, p_id))
                 
-                # 2. Inserisci nello Storico (Logghiamo il prezzo per i grafici futuri)
-                # Ottimizzazione: Salviamo nello storico solo se il prezzo è cambiato o se l'ultima rilevazione è vecchia di 24h?
-                # Per semplicità ora salviamo SEMPRE, così popoli il grafico velocemente.
-                cursor.execute("INSERT INTO price_history (product_id, price) VALUES (%s, %s)", (p_id, new_price))
-                
-                conn.commit()
-                
-                diff = new_price - float(old_price)
-                if diff < 0:
-                    print(f"     📉 CALO PREZZO! {old_price} -> {new_price} (-{abs(diff)}€)")
-                elif diff > 0:
-                    print(f"     📈 AUMENTO! {old_price} -> {new_price} (+{diff}€)")
+                # 2. LOGICA SMART: Salva nello storico SOLO se il prezzo è cambiato
+                if new_price != old_price:
+                    cursor.execute("INSERT INTO price_history (product_id, price) VALUES (%s, %s)", (p_id, new_price))
+                    
+                    diff = new_price - old_price
+                    if diff < 0:
+                        print(f"     📉 CALO PREZZO! {asin}: {old_price}€ -> {new_price}€ (-{abs(diff):.2f}€)")
+                    else:
+                        print(f"     📈 AUMENTO! {asin}: {old_price}€ -> {new_price}€ (+{diff:.2f}€)")
                 else:
-                    print(f"     = Stabile a {new_price}€")
+                    # Prezzo invariato, non intaso lo storico
+                    pass
+
+                conn.commit()
             
-            # Pausa anti-ban
+            # Pausa breve anti-ban tra i prodotti
             time.sleep(random.uniform(5, 10))
             
     except Exception as e:
