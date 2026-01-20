@@ -54,7 +54,7 @@ def upload_image_to_wp(image_url, title):
     return None
 
 def generate_scorecard_html(score, badge, sub_scores):
-    """Genera HTML e CSS (Minificato su una riga per evitare <br> di WP)"""
+    """Genera Scorecard + CSS FAQ Dinamico (Ripristinato e corretto per il doppio +)"""
     badge_color = "#28a745"
     if score < 7: badge_color = "#ffc107"
     if score < 5: badge_color = "#dc3545"
@@ -75,7 +75,9 @@ def generate_scorecard_html(score, badge, sub_scores):
         </div>
         """
 
-    # CSS MINIFICATO (Tutto su una riga per evitare che WP inserisca <br>)
+    # CSS MINIFICATO (Tutto su una riga)
+    # Include le regole per nascondere il marker di default (list-style: none)
+    # e le regole per il nostro marker personalizzato (::after content: '+')
     css_minified = """<style>@keyframes loadBar{from{width:0%}to{width:var(--target-width)}}.rd-bar{--target-width:0%}.rd-faq-details{border-bottom:1px solid #eee!important;padding:15px 0!important;margin:0!important}.rd-faq-details summary{font-weight:700!important;cursor:pointer!important;list-style:none!important;display:flex!important;justify-content:space-between!important;align-items:center!important;font-size:1.1rem!important;color:#222!important;outline:none!important;background:0 0!important}.rd-faq-details summary::-webkit-details-marker{display:none!important}.rd-faq-details summary::after{content:'+'!important;font-size:1.5rem!important;color:#ff9900!important;font-weight:300!important}.rd-faq-details[open] summary::after{content:'-'!important;color:#B12704!important}.rd-faq-content{padding-top:15px!important;color:#555!important;font-size:.95rem!important;line-height:1.6!important}</style>"""
 
     js_script = """<script>document.addEventListener("DOMContentLoaded", function(){var bars=document.querySelectorAll('.rd-bar');bars.forEach(function(bar){bar.style.setProperty('--target-width', bar.getAttribute('data-width'));});});</script>"""
@@ -98,7 +100,7 @@ def generate_scorecard_html(score, badge, sub_scores):
     """
 
 def generate_faq_html(faqs):
-    """Genera Accordion HTML con Stile INLINE (Sicurezza massima)"""
+    """Genera FAQ HTML Semplice (Il CSS fa il resto)"""
     if not faqs: return "", ""
     
     html_out = '<div style="margin-top: 40px;"><h2>Domande Frequenti</h2>'
@@ -107,14 +109,11 @@ def generate_faq_html(faqs):
     for f in faqs:
         q = f['question']
         a = f['answer']
-        # STILE INLINE AGGIUNTO: Se il CSS si rompe, questo stile vince comunque.
+        # Usiamo solo la classe CSS, niente span strani, così il CSS ::after funziona
         html_out += f"""
-        <details class="rd-faq-details" style="border-bottom: 1px solid #eee; padding: 15px 0;">
-            <summary style="font-weight: bold; font-size: 1.1rem; cursor: pointer; list-style: none; display: flex; justify-content: space-between;">
-                <span>{q}</span>
-                <span style="color: #ff9900; font-weight: bold;">+</span>
-            </summary>
-            <div class="rd-faq-content" style="padding-top: 10px; color: #555; line-height: 1.6;">{a}</div>
+        <details class="rd-faq-details">
+            <summary>{q}</summary>
+            <div class="rd-faq-content">{a}</div>
         </details>
         """
         schema_items.append({
