@@ -35,9 +35,12 @@ def genera_recensione_seo(product_data):
     features = product_data.get('features', '')
 
     print(f"      🧠 [AI] Scrivo recensione strutturata: {title[:30]}...")
+    
+    # Prepariamo la lista delle categorie come stringa per il prompt
+    cat_list_str = ", ".join(CATEGORIES_MAP.keys())
 
-    # PROMPT BLINDATO SULLA STRUTTURA
-    prompt_system = """
+    # PROMPT BLINDATO SULLA STRUTTURA + CATEGORIE
+    prompt_system = f"""
     Sei il Capo Redattore Tecnico di RecensioneDigitale.it.
     Il tuo compito è scrivere una recensione approfondita, critica e perfettamente formattata in HTML.
     
@@ -55,25 +58,30 @@ def genera_recensione_seo(product_data):
     6. <h3>✅ Pro</h3> (Usa una lista <ul><li>...</li></ul>)
     7. <h3>❌ Contro</h3> (Usa una lista <ul><li>...</li></ul>)
     
+    CATEGORIA:
+    Scegli la categoria più adatta ESCLUSIVAMENTE da questa lista:
+    [{cat_list_str}]
+    Nel campo 'category_id' del JSON, restituisci IL NOME esatto della categoria scelta (es. "Smartphone").
+    
     TONO DI VOCE:
     - Terza persona plurale ("Abbiamo testato", "Riteniamo che").
     - Sii critico: Se costa tanto (sopra 100€) e vale poco, dillo chiaramente.
     - Sii onesto: Scala voti 0-10 reale. Non aver paura di dare 4 o 5 se meritato.
     
     OUTPUT JSON RICHIESTO:
-    {
+    {{
         "html_content": "<p>...</p><h2>Design</h2><p>...</p>...",
         "meta_description": "Frase SEO di 150 caratteri.",
-        "category_id": 123,
+        "category_id": "Smartphone", 
         "sub_scores": [
-            {"label": "Design", "value": 7.0},
-            {"label": "Prestazioni", "value": 8.0},
-            {"label": "Prezzo", "value": 5.0},
-            {"label": "Qualità", "value": 6.5}
+            {{"label": "Design", "value": 7.0}},
+            {{"label": "Prestazioni", "value": 8.0}},
+            {{"label": "Prezzo", "value": 5.0}},
+            {{"label": "Qualità", "value": 6.5}}
         ],
         "verdict_badge": "Buono",
-        "faqs": [{"question": "...", "answer": "..."}]
-    }
+        "faqs": [{{"question": "...", "answer": "..."}}]
+    }}
     """
 
     prompt_user = f"""
@@ -114,19 +122,29 @@ def genera_recensione_seo(product_data):
         else:
             ai_data['final_score'] = 6.0
 
-        # Mappatura Categorie
+        # --- MATCHING CATEGORIA (FIX) ---
         chosen_cat = ai_data.get('category_id')
-        real_cat_id = 1
+        real_cat_id = 1 # Fallback: Uncategorized
+        
+        print(f"      🗂️  AI ha scelto la categoria: '{chosen_cat}'")
+
         if isinstance(chosen_cat, int):
+            # Se per miracolo l'AI indovina l'ID
             real_cat_id = chosen_cat
-        elif isinstance(chosen_cat, str) and chosen_cat in CATEGORIES_MAP:
-            real_cat_id = CATEGORIES_MAP[chosen_cat]
-        else:
-            for key in CATEGORIES_MAP:
-                if key.lower() in str(chosen_cat).lower():
-                    real_cat_id = CATEGORIES_MAP[key]
-                    break
+        elif isinstance(chosen_cat, str):
+            # 1. Tentativo Esatto
+            if chosen_cat in CATEGORIES_MAP:
+                real_cat_id = CATEGORIES_MAP[chosen_cat]
+            else:
+                # 2. Tentativo "Fuzzy" (parziale)
+                # Utile se l'AI scrive "Smartphones" invece di "Smartphone"
+                for key in CATEGORIES_MAP:
+                    if key.lower() in chosen_cat.lower() or chosen_cat.lower() in key.lower():
+                        real_cat_id = CATEGORIES_MAP[key]
+                        break
+        
         ai_data['category_id'] = real_cat_id
+        print(f"      ✅ Mappata a ID: {real_cat_id}")
 
         return ai_data
 
