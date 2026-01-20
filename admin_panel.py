@@ -5,7 +5,7 @@ import time
 # --- CONFIGURAZIONE ---
 DB_CONFIG = {
     'user': 'root',
-    'password': 'FfEivO8tgJSGWkxEV84g4qIVvmZgspy8lnnS3O4eHiyZdM5vPq9cVg1ZemSDKHZL,
+    'password': 'FfEivO8tgJSGWkxEV84g4qIVvmZgspy8lnnS3O4eHiyZdM5vPq9cVg1ZemSDKHZL',
     'host': os.getenv('DB_HOST', '80.211.135.46'),
     'port': 3306,
     'database': 'recensionedigitale'
@@ -33,7 +33,7 @@ def show_status():
         failed = stats.get('failed', 0)
         draft = stats.get('draft', 0)
 
-        print("\n📊 STATO SERVER (Stable V1):")
+        print("\n📊 STATO SERVER (Stable V1 + Rescue):")
         print(f"   ⏳ In Coda (Pending):       {pending}")
         print(f"   ⚙️  In Lavorazione:          {processing}")
         print(f"   📝 Bozze (Draft):           {draft}")
@@ -43,7 +43,6 @@ def show_status():
 
         # Lista ultimi pubblicati
         print("\n✅ ULTIMI 5 PUBBLICATI:")
-        # Usiamo una query sicura che non dipende da 'last_update' se non c'è
         try:
             cursor.execute("SELECT asin, title, current_price FROM products WHERE status = 'published' ORDER BY id DESC LIMIT 5")
             recents = cursor.fetchall()
@@ -60,7 +59,6 @@ def show_status():
 
 def add_asin():
     asin_input = input("\nInserisci ASIN (o lista separata da virgola): ").strip()
-    # Pulizia input base
     asin_input = asin_input.replace("'", "").replace('"', '')
     
     if not asin_input: return
@@ -74,7 +72,6 @@ def add_asin():
     for asin in asins:
         if len(asin) < 5: continue
         try:
-            # Verifica esistenza
             cursor.execute("SELECT id FROM products WHERE asin = %s", (asin,))
             if cursor.fetchone():
                 print(f"   ⚠️  {asin} esiste già.")
@@ -90,6 +87,31 @@ def add_asin():
     print(f"\n--- Aggiunti {added} ASIN ---")
     time.sleep(1.5)
 
+def reset_stuck_products():
+    """Riporta i prodotti bloccati in 'processing' allo stato 'pending'"""
+    print("\n🚑 Tentativo di sblocco coda...")
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        # La query magica: sposta tutto ciò che è bloccato indietro nella coda
+        cursor.execute("UPDATE products SET status = 'pending' WHERE status = 'processing'")
+        count = cursor.rowcount
+        conn.commit()
+        
+        if count > 0:
+            print(f"   ✅ Sbloccati {count} prodotti! Ora sono di nuovo in coda (Pending).")
+            print("      Il bot li riprocesserà automaticamente.")
+        else:
+            print("   👍 Nessun prodotto bloccato trovato.")
+            
+    except Exception as e:
+        print(f"❌ Errore DB: {e}")
+    finally:
+        conn.close()
+    
+    input("\nPremi INVIO per tornare al menu...")
+
 def main_loop():
     while True:
         clear_screen()
@@ -97,6 +119,7 @@ def main_loop():
         print("\nCOMANDI:")
         print(" [1] Aggiungi Nuovo ASIN")
         print(" [2] Aggiorna Vista")
+        print(" [3] 🚑 Sblocca 'In Lavorazione' (Reset)")
         print(" [q] Esci")
         
         choice = input("\nScelta > ").strip().lower()
@@ -105,6 +128,8 @@ def main_loop():
             add_asin()
         elif choice == '2':
             continue
+        elif choice == '3':
+            reset_stuck_products()
         elif choice == 'q':
             break
 
