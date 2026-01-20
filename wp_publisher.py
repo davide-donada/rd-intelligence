@@ -33,10 +33,8 @@ def get_headers():
 def clean_amazon_image_url(url):
     """
     Rimuove i parametri di ridimensionamento di Amazon per ottenere l'immagine FULL HD.
-    Esempio: trasforma '..._AC_SY879_.jpg' in '....jpg'
     """
     if not url: return None
-    # Regex: cerca qualsiasi cosa tra ._AC_ e _. e lo rimuove
     try:
         clean_url = re.sub(r'\._AC_.*_\.', '.', url)
         return clean_url
@@ -50,7 +48,14 @@ def upload_image_to_wp(image_url, title):
         img_resp = requests.get(image_url, headers={'User-Agent': 'Mozilla/5.0'})
         if img_resp.status_code != 200: return None
         
-        filename = f"{title.replace(' ', '-').lower()[:50]}.jpg"
+        # --- FIX ENCODING ---
+        # 1. Rimuoviamo caratteri non ASCII (come ’ o à o emoji) dal nome file
+        # Sostituiamo tutto ciò che NON è alfanumerico con un trattino
+        safe_title = re.sub(r'[^a-zA-Z0-9]', '-', title)
+        # 2. Rimuoviamo doppi trattini eventuali
+        safe_title = re.sub(r'-+', '-', safe_title)
+        
+        filename = f"{safe_title.lower()[:50]}.jpg"
         
         credentials = f"{WP_USER}:{WP_APP_PASSWORD}"
         token = base64.b64encode(credentials.encode())
@@ -68,7 +73,7 @@ def upload_image_to_wp(image_url, title):
     return None
 
 def generate_scorecard_html(score, badge, sub_scores):
-    """Genera Scorecard + CSS FAQ Blindato (Versione approvata)"""
+    """Genera Scorecard + CSS FAQ Blindato"""
     badge_color = "#28a745"
     if score < 7: badge_color = "#ffc107"
     if score < 5: badge_color = "#dc3545"
@@ -89,7 +94,6 @@ def generate_scorecard_html(score, badge, sub_scores):
         </div>
         """
 
-    # CSS Minificato per evitare conflitti con WordPress e nascondere il doppio marker
     css_minified = """<style>@keyframes loadBar{from{width:0%}to{width:var(--target-width)}}.rd-bar{--target-width:0%}.rd-faq-details{border-bottom:1px solid #eee!important;padding:15px 0!important;margin:0!important}.rd-faq-details summary{font-weight:700!important;cursor:pointer!important;list-style:none!important;display:flex!important;justify-content:space-between!important;align-items:center!important;font-size:1.1rem!important;color:#222!important;outline:none!important;background:0 0!important}.rd-faq-details summary::-webkit-details-marker{display:none!important}.rd-faq-details summary::after{content:'+'!important;font-size:1.5rem!important;color:#ff9900!important;font-weight:300!important}.rd-faq-details[open] summary::after{content:'-'!important;color:#B12704!important}.rd-faq-content{padding-top:15px!important;color:#555!important;font-size:.95rem!important;line-height:1.6!important}</style>"""
 
     js_script = """<script>document.addEventListener("DOMContentLoaded", function(){var bars=document.querySelectorAll('.rd-bar');bars.forEach(function(bar){bar.style.setProperty('--target-width', bar.getAttribute('data-width'));});});</script>"""
@@ -120,7 +124,6 @@ def generate_faq_html(faqs):
     for f in faqs:
         q = f['question']
         a = f['answer']
-        # Markup HTML semplice per compatibilità con il CSS
         html_out += f"""
         <details class="rd-faq-details">
             <summary>{q}</summary>
@@ -143,7 +146,6 @@ def format_article_html(product, local_image_url=None, ai_data=None):
     asin = product[1]
     title = product[2]
     price = product[3]
-    # Usiamo l'immagine locale caricata su WP (che è quella Amazon HD)
     final_image = local_image_url if local_image_url else clean_amazon_image_url(product[5])
     
     html_body = ai_data.get('html_content', product[6]) if ai_data else product[6]
@@ -226,10 +228,7 @@ def run_publisher():
 
             print(f"   > Pubblicazione: {title[:30]}...")
 
-            # 1. Pulizia URL per avere l'HD
             hd_amazon_img = clean_amazon_image_url(raw_amazon_img)
-            
-            # 2. Caricamento su WP (come Featured Image e per uso interno)
             featured_media_id = upload_image_to_wp(hd_amazon_img, title)
             
             local_img_url = None
