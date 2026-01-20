@@ -3,10 +3,9 @@ import requests
 import time
 import os
 import random
-from datetime import datetime
 from bs4 import BeautifulSoup
 
-# CONFIGURAZIONE DATABASE
+# --- CONFIGURAZIONE ---
 DB_CONFIG = {
     'user': 'root',
     'password': os.getenv('DB_PASSWORD'),
@@ -25,67 +24,54 @@ def get_amazon_price(asin):
     try:
         response = requests.get(url, headers=HEADERS, timeout=10)
         if response.status_code != 200: return None
-        
         soup = BeautifulSoup(response.content, "html.parser")
         price_whole = soup.find('span', {'class': 'a-price-whole'})
         price_fraction = soup.find('span', {'class': 'a-price-fraction'})
-        
         if price_whole:
             whole = price_whole.text.strip().replace('.', '').replace(',', '')
             fraction = price_fraction.text.strip() if price_fraction else "00"
             return float(f"{whole}.{fraction}")
-            
-    except Exception as e:
-        print(f"⚠️ Errore scraping {asin}: {e}")
+    except: pass
     return None
 
 def update_prices_loop():
-    print("📉 AVVIO MONITORAGGIO PREZZI (Smart History)...")
-    
+    print("📉 MONITORAGGIO PREZZI (Smart History Attivo)...")
     conn = None
     try:
         conn = mysql.connector.connect(**DB_CONFIG)
         cursor = conn.cursor()
         
-        # Prendiamo tutti i prodotti pubblicati
-        cursor.execute("SELECT id, asin, title, current_price FROM products WHERE status = 'published'")
+        # Prende tutti i prodotti pubblicati
+        cursor.execute("SELECT id, asin, current_price FROM products WHERE status = 'published'")
         products = cursor.fetchall()
         
         print(f"   Trovati {len(products)} prodotti da controllare.")
-        
+
         for p in products:
-            p_id, asin, title, old_price = p
-            # Convertiamo old_price in float per sicurezza (dal DB arriva come Decimal o float)
+            p_id, asin, old_price = p
             old_price = float(old_price) if old_price else 0.0
-            
-            # print(f"   > Controllo: {asin}...") # Decommenta per debug verboso
             
             new_price = get_amazon_price(asin)
             
             if new_price and new_price > 0:
-                # 1. Aggiorna SEMPRE il prezzo corrente sul sito (per averlo fresco in homepage)
-                cursor.execute("UPDATE products SET current_price = %s, last_update = NOW() WHERE id = %s", (new_price, p_id))
+                # 1. Aggiorna SEMPRE il prezzo attuale sulla vetrina
+                cursor.execute("UPDATE products SET current_price = %s WHERE id = %s", (new_price, p_id))
                 
-                # 2. LOGICA SMART: Salva nello storico SOLO se il prezzo è cambiato
+                # 2. Salva nello storico SOLO se il prezzo è cambiato
                 if new_price != old_price:
                     cursor.execute("INSERT INTO price_history (product_id, price) VALUES (%s, %s)", (p_id, new_price))
-                    
                     diff = new_price - old_price
-                    if diff < 0:
-                        print(f"     📉 CALO PREZZO! {asin}: {old_price}€ -> {new_price}€ (-{abs(diff):.2f}€)")
-                    else:
-                        print(f"     📈 AUMENTO! {asin}: {old_price}€ -> {new_price}€ (+{diff:.2f}€)")
+                    icon = "📉" if diff < 0 else "📈"
+                    print(f"   {icon} {asin}: {old_price}€ -> {new_price}€")
                 else:
-                    # Prezzo invariato, non intaso lo storico
+                    # Prezzo stabile, non scriviamo nello storico per risparmiare spazio
                     pass
 
                 conn.commit()
             
-            # Pausa breve anti-ban tra i prodotti
-            time.sleep(random.uniform(5, 10))
+            time.sleep(random.uniform(5, 10)) # Pausa anti-ban
             
-    except Exception as e:
-        print(f"❌ Errore Loop Prezzi: {e}")
+    except Exception as e: print(f"❌ Errore Loop: {e}")
     finally:
         if conn: conn.close()
 

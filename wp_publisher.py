@@ -42,7 +42,7 @@ def upload_image_to_wp(image_url, title):
     if not image_url or not isinstance(image_url, str) or not image_url.startswith('http'):
         return None
     
-    print(f"   📸 Scarico immagine HD: {title[:20]}...")
+    print(f"   📸 Scarico IMG: {title[:20]}...")
     try:
         img_resp = requests.get(image_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=15)
         if img_resp.status_code != 200: return None
@@ -63,46 +63,37 @@ def upload_image_to_wp(image_url, title):
         if wp_resp.status_code == 201:
             return wp_resp.json()['id']
     except Exception as e:
-        print(f"     ⚠️ Errore upload img: {e}")
+        print(f"     ⚠️ Errore upload: {e}")
     return None
 
-# --- NUOVA FUNZIONE: ANALISI PREZZO ---
+# --- ANALISI PREZZO (LOGICA KEEPA) ---
 def analyze_price_history(product_id, current_price):
-    """
-    Interroga il DB per ottenere lo storico e decidere il verdetto sul prezzo.
-    """
     try:
         conn = mysql.connector.connect(**DB_CONFIG)
         cursor = conn.cursor()
-        # Prendi gli ultimi 30 prezzi registrati
         cursor.execute("SELECT price FROM price_history WHERE product_id = %s ORDER BY recorded_at DESC LIMIT 30", (product_id,))
         rows = cursor.fetchall()
         conn.close()
 
         if not rows:
-            # Nessuno storico: Neutro
             return "⚖️ Prezzo Standard", "#6c757d", "Analisi in corso..."
 
         prices = [float(r[0]) for r in rows]
-        # Aggiungiamo il prezzo attuale se non c'è ancora
         prices.append(float(current_price))
         
         avg_price = sum(prices) / len(prices)
         min_price = min(prices)
         current = float(current_price)
 
-        # LOGICA DEL VERDETTO
         if current <= min_price:
-            return "🔥 OTTIMO PREZZO", "#28a745", "È il prezzo più basso registrato!" # Verde
+            return "🔥 OTTIMO PREZZO", "#28a745", "Minimo storico rilevato!"
         elif current < avg_price:
-            return "✅ BUON PREZZO", "#17a2b8", "Sotto la media storica." # Blu
+            return "✅ BUON PREZZO", "#17a2b8", "Sotto la media."
         elif current > (avg_price * 1.1):
-            return "⚠️ PREZZO ALTO", "#dc3545", "Consigliamo di aspettare." # Rosso
+            return "⚠️ PREZZO ALTO", "#dc3545", "Consigliamo di aspettare."
         else:
-            return "⚖️ PREZZO MEDIO", "#ffc107", "In linea con il mercato." # Giallo
-
-    except Exception as e:
-        print(f"Err Analisi Prezzi: {e}")
+            return "⚖️ PREZZO MEDIO", "#ffc107", "In linea con il mercato."
+    except:
         return "⚖️ Prezzo Standard", "#6c757d", ""
 
 def generate_scorecard_html(score, badge, sub_scores):
@@ -126,10 +117,8 @@ def generate_scorecard_html(score, badge, sub_scores):
             </div>
         </div>
         """
-
     css_minified = """<style>@keyframes loadBar{from{width:0%}to{width:var(--target-width)}}.rd-bar{--target-width:0%}.rd-faq-details{border-bottom:1px solid #eee!important;padding:15px 0!important;margin:0!important}.rd-faq-details summary{font-weight:700!important;cursor:pointer!important;list-style:none!important;display:flex!important;justify-content:space-between!important;align-items:center!important;font-size:1.1rem!important;color:#222!important;outline:none!important;background:0 0!important}.rd-faq-details summary::-webkit-details-marker{display:none!important}.rd-faq-details summary::after{content:'+'!important;font-size:1.5rem!important;color:#ff9900!important;font-weight:300!important}.rd-faq-details[open] summary::after{content:'-'!important;color:#B12704!important}.rd-faq-content{padding-top:15px!important;color:#555!important;font-size:.95rem!important;line-height:1.6!important}</style>"""
     js_script = """<script>document.addEventListener("DOMContentLoaded", function(){var bars=document.querySelectorAll('.rd-bar');bars.forEach(function(bar){bar.style.setProperty('--target-width', bar.getAttribute('data-width'));});});</script>"""
-
     return f"{css_minified}{js_script}<div style='background: #fdfdfd; border: 1px solid #eee; border-radius: 12px; padding: 25px; margin: 30px 0; box-shadow: 0 5px 15px rgba(0,0,0,0.05);'><div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; border-bottom:1px solid #eee; padding-bottom:15px;'><div><span style='background:{badge_color}; color:white; padding:5px 10px; border-radius:5px; font-weight:bold; text-transform:uppercase; font-size:0.8rem; letter-spacing:1px;'>{badge}</span><h3 style='margin: 10px 0 0 0; font-size: 1.5rem;'>Verdetto Finale</h3></div><div style='background:{badge_color}1a; color:{badge_color}; width:70px; height:70px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:1.8rem; font-weight:bold; border: 2px solid {badge_color};'>{score}</div></div><div>{bars_html}</div></div>"
 
 def generate_faq_html(faqs):
@@ -146,19 +135,17 @@ def generate_faq_html(faqs):
     return html_out, f'\n<script type="application/ld+json">{json.dumps(schema_json)}</script>'
 
 def format_article_html(product, local_image_url=None, ai_data=None):
-    # Dati DB
     product_id = product[0]
     asin = product[1]
     title = product[2]
     price = product[3]
     
-    # Immagine
     if local_image_url and isinstance(local_image_url, str) and local_image_url.startswith('http'):
         final_image = local_image_url
     else:
         final_image = clean_amazon_image_url(product[5])
     
-    html_body = ai_data.get('html_content', 'Recensione in arrivo...')
+    html_body = ai_data.get('html_content', 'Recensione in lavorazione...')
     score = ai_data.get('final_score', 8.0)
     badge = ai_data.get('verdict_badge', 'Consigliato')
     sub_scores = ai_data.get('sub_scores', [])
@@ -166,39 +153,11 @@ def format_article_html(product, local_image_url=None, ai_data=None):
     video_id = ai_data.get('video_id', None)
     aff_link = f"https://www.amazon.it/dp/{asin}?tag=recensionedigitale-21"
 
-    # --- CALCOLO ANALISI PREZZO ---
-    # Chiamiamo la funzione che interroga lo storico
+    # Analisi Prezzo
     p_verdict, p_color, p_desc = analyze_price_history(product_id, price)
-    
-    # Widget HTML Prezzo
-    price_widget = f"""
-    <div style="background:{p_color}1a; border-left: 5px solid {p_color}; padding: 10px 15px; margin: 10px 0; border-radius: 4px;">
-        <div style="font-weight: bold; color: {p_color}; text-transform: uppercase; font-size: 0.85rem;">{p_verdict}</div>
-        <div style="font-size: 0.8rem; color: #555;">{p_desc}</div>
-    </div>
-    """
+    price_widget = f"""<div style="background:{p_color}1a; border-left: 5px solid {p_color}; padding: 10px 15px; margin: 10px 0; border-radius: 4px;"><div style="font-weight: bold; color: {p_color}; text-transform: uppercase; font-size: 0.85rem;">{p_verdict}</div><div style="font-size: 0.8rem; color: #555;">{p_desc}</div></div>"""
 
-    header_html = f"""
-    <div style='background-color: #fff; border: 1px solid #e1e1e1; padding: 20px; margin-bottom: 30px; border-radius: 8px; display: flex; flex-wrap: wrap; gap: 20px; align-items: center;'>
-        <div style='flex: 1; text-align: center; min-width: 200px;'>
-            <a href='{aff_link}' rel='nofollow sponsored' target='_blank'>
-                <img src='{final_image}' alt='{title}' style='max-height: 250px; width: auto; object-fit: contain;'>
-            </a>
-        </div>
-        <div style='flex: 1.5; min-width: 250px;'>
-            <h2 style='margin-top: 0; font-size: 1.4rem;'>{title}</h2>
-            
-            <div style='font-size: 2rem; color: #B12704; font-weight: bold; margin: 10px 0;'>€ {price}</div>
-            
-            {price_widget}
-            
-            <a href='{aff_link}' rel='nofollow sponsored' target='_blank' style='background-color: #ff9900; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block; margin-top: 10px;'>
-                👉 Vedi Offerta su Amazon
-            </a>
-            <p style='font-size: 0.8rem; color: #666; margin-top: 5px;'>Prezzo aggiornato al: {datetime.now().strftime('%d/%m/%Y')}</p>
-        </div>
-    </div>
-    """
+    header_html = f"<div style='background-color: #fff; border: 1px solid #e1e1e1; padding: 20px; margin-bottom: 30px; border-radius: 8px; display: flex; flex-wrap: wrap; gap: 20px; align-items: center;'><div style='flex: 1; text-align: center; min-width: 200px;'><a href='{aff_link}' rel='nofollow sponsored' target='_blank'><img src='{final_image}' alt='{title}' style='max-height: 250px; width: auto; object-fit: contain;'></a></div><div style='flex: 1.5; min-width: 250px;'><h2 style='margin-top: 0; font-size: 1.4rem;'>{title}</h2><div style='font-size: 2rem; color: #B12704; font-weight: bold; margin: 10px 0;'>€ {price}</div>{price_widget}<a href='{aff_link}' rel='nofollow sponsored' target='_blank' style='background-color: #ff9900; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block; margin-top: 10px;'>👉 Vedi Offerta su Amazon</a><p style='font-size: 0.8rem; color: #666; margin-top: 5px;'>Prezzo aggiornato al: {datetime.now().strftime('%d/%m/%Y')}</p></div></div>"
 
     video_html = ""
     if video_id:
@@ -211,7 +170,7 @@ def format_article_html(product, local_image_url=None, ai_data=None):
     return header_html + html_body + scorecard_html + video_html + faq_html + footer_html + faq_schema
 
 def run_publisher():
-    print("🔌 [WP] Controllo coda pubblicazione...")
+    print("🔌 [WP] Controllo bozze...")
     conn = None
     try:
         conn = mysql.connector.connect(**DB_CONFIG)
@@ -225,20 +184,20 @@ def run_publisher():
             except:
                 ai_data = {"html_content": p[5]}
 
-            print(f"   > Elaborazione: {p[2][:30]}...")
+            print(f"   > Pubblicazione: {p[2][:30]}...")
             
-            # Scarico immagine
             hd_url = clean_amazon_image_url(p[4])
             media_id = upload_image_to_wp(hd_url, p[2])
             
             local_url = None
             if media_id:
-                m_info = requests.get(f"{WP_API_URL}/media/{media_id}", headers=get_headers()).json()
-                local_url = m_info.get('source_url')
+                try:
+                    m_info = requests.get(f"{WP_API_URL}/media/{media_id}", headers=get_headers()).json()
+                    local_url = m_info.get('source_url')
+                except: pass
 
             post_content = format_article_html(p, local_url, ai_data)
             
-            # Schema
             final_score = ai_data.get('final_score', 8.0)
             schema_p = {"@context": "https://schema.org/", "@type": "Product", "name": p[2], "review": {"@type": "Review", "reviewRating": {"@type": "Rating", "ratingValue": str(final_score)}, "author": {"@type": "Person", "name": "Redazione RD"}}}
             post_content += f'\n<script type="application/ld+json">{json.dumps(schema_p)}</script>'
@@ -249,25 +208,22 @@ def run_publisher():
                 'status': 'draft', 
                 'categories': [p[6]],
                 'featured_media': media_id if media_id else 0,
-                'excerpt': p[7] if p[7] else f"Recensione di {p[2]}"
+                'excerpt': p[7]
             }
             if WP_AUTHOR_ID: post_data['author'] = int(WP_AUTHOR_ID)
 
             resp = requests.post(f"{WP_API_URL}/posts", headers=get_headers(), json=post_data)
             if resp.status_code == 201:
                 cursor.execute("UPDATE products SET status = 'published' WHERE id = %s", (p[0],))
-                
-                # --- AGGIORNAMENTO CRUCIALE PER IL PREZZO ---
-                # Quando pubblichiamo, salviamo il primo punto nello storico prezzi
-                # così il widget ha almeno un dato (il prezzo di partenza)
+                # INIZIALIZZAZIONE STORICO PREZZI (Fondamentale!)
+                # Quando pubblichiamo, salviamo il primo punto nello storico
                 cursor.execute("INSERT INTO price_history (product_id, price) VALUES (%s, %s)", (p[0], p[3]))
-                
                 conn.commit()
-                print("     ✅ Pubblicato!")
+                print("     ✅ Pubblicato e Iniziato Tracking!")
             else:
-                print(f"     ❌ Errore: {resp.text}")
+                print(f"     ❌ Errore WP: {resp.text}")
 
-    except Exception as e: print(f"❌ Errore: {e}")
+    except Exception as e: print(f"❌ Errore Publisher: {e}")
     finally: 
         if conn: conn.close()
 
