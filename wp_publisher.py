@@ -17,7 +17,7 @@ DB_CONFIG = {
 WP_API_URL = "https://www.recensionedigitale.it/wp-json/wp/v2"
 WP_USER = os.getenv('WP_USER', 'davide')
 WP_APP_PASSWORD = os.getenv('WP_PASSWORD')
-WP_AUTHOR_ID = os.getenv('WP_AUTHOR_ID') # ID Autore forzato (opzionale)
+WP_AUTHOR_ID = os.getenv('WP_AUTHOR_ID')
 
 def get_headers():
     if not WP_APP_PASSWORD: return {}
@@ -30,7 +30,6 @@ def get_headers():
     }
 
 def upload_image_to_wp(image_url, title):
-    """Scarica l'immagine da Amazon e la carica su WordPress"""
     if not image_url: return None
     print(f"   📸 Scarico immagine: {title[:20]}...")
     try:
@@ -55,10 +54,10 @@ def upload_image_to_wp(image_url, title):
     return None
 
 def generate_scorecard_html(score, badge, sub_scores):
-    """Genera HTML e CSS per la Scorecard Animata + CSS FAQ Blindato"""
-    badge_color = "#28a745" # Verde
-    if score < 7: badge_color = "#ffc107" # Giallo
-    if score < 5: badge_color = "#dc3545" # Rosso
+    """Genera HTML e CSS (Minificato su una riga per evitare <br> di WP)"""
+    badge_color = "#28a745"
+    if score < 7: badge_color = "#ffc107"
+    if score < 5: badge_color = "#dc3545"
 
     bars_html = ""
     for item in sub_scores:
@@ -76,61 +75,14 @@ def generate_scorecard_html(score, badge, sub_scores):
         </div>
         """
 
-    # CSS con !important per forzare lo stile anche se il tema si oppone
-    css_style = f"""
-    <style>
-        @keyframes loadBar {{ from {{ width: 0%; }} to {{ width: var(--target-width); }} }}
-        .rd-bar {{ --target-width: 0%; }} 
-        
-        /* Stili FAQ Forzati */
-        .rd-faq-details {{ 
-            border-bottom: 1px solid #eee !important; 
-            padding: 15px 0 !important; 
-            margin: 0 !important;
-        }}
-        .rd-faq-details summary {{ 
-            font-weight: 700 !important;
-            cursor: pointer !important; 
-            list-style: none !important; 
-            display: flex !important; 
-            justify-content: space-between !important; 
-            align-items: center !important;
-            font-size: 1.1rem !important;
-            color: #222 !important;
-            outline: none !important;
-            background: none !important;
-        }}
-        .rd-faq-details summary::-webkit-details-marker {{ display: none !important; }}
-        
-        .rd-faq-details summary::after {{ 
-            content: '+' !important; 
-            font-size: 1.5rem !important; 
-            color: #ff9900 !important; 
-            font-weight: 300 !important;
-        }}
-        .rd-faq-details[open] summary::after {{ 
-            content: '-' !important; 
-            color: #B12704 !important;
-        }}
-        .rd-faq-content {{ 
-            padding-top: 15px !important; 
-            color: #555 !important; 
-            font-size: 0.95rem !important; 
-            line-height: 1.6 !important; 
-        }}
-    </style>
-    <script>
-        document.addEventListener("DOMContentLoaded", function() {{
-            var bars = document.querySelectorAll('.rd-bar');
-            bars.forEach(function(bar) {{
-                bar.style.setProperty('--target-width', bar.getAttribute('data-width'));
-            }});
-        }});
-    </script>
-    """
+    # CSS MINIFICATO (Tutto su una riga per evitare che WP inserisca <br>)
+    css_minified = """<style>@keyframes loadBar{from{width:0%}to{width:var(--target-width)}}.rd-bar{--target-width:0%}.rd-faq-details{border-bottom:1px solid #eee!important;padding:15px 0!important;margin:0!important}.rd-faq-details summary{font-weight:700!important;cursor:pointer!important;list-style:none!important;display:flex!important;justify-content:space-between!important;align-items:center!important;font-size:1.1rem!important;color:#222!important;outline:none!important;background:0 0!important}.rd-faq-details summary::-webkit-details-marker{display:none!important}.rd-faq-details summary::after{content:'+'!important;font-size:1.5rem!important;color:#ff9900!important;font-weight:300!important}.rd-faq-details[open] summary::after{content:'-'!important;color:#B12704!important}.rd-faq-content{padding-top:15px!important;color:#555!important;font-size:.95rem!important;line-height:1.6!important}</style>"""
+
+    js_script = """<script>document.addEventListener("DOMContentLoaded", function(){var bars=document.querySelectorAll('.rd-bar');bars.forEach(function(bar){bar.style.setProperty('--target-width', bar.getAttribute('data-width'));});});</script>"""
 
     return f"""
-    {css_style}
+    {css_minified}
+    {js_script}
     <div style="background: #fdfdfd; border: 1px solid #eee; border-radius: 12px; padding: 25px; margin: 30px 0; box-shadow: 0 5px 15px rgba(0,0,0,0.05);">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; border-bottom:1px solid #eee; padding-bottom:15px;">
             <div>
@@ -146,7 +98,7 @@ def generate_scorecard_html(score, badge, sub_scores):
     """
 
 def generate_faq_html(faqs):
-    """Genera Accordion HTML con Stile Inline e JSON-LD Schema"""
+    """Genera Accordion HTML con Stile INLINE (Sicurezza massima)"""
     if not faqs: return "", ""
     
     html_out = '<div style="margin-top: 40px;"><h2>Domande Frequenti</h2>'
@@ -155,11 +107,14 @@ def generate_faq_html(faqs):
     for f in faqs:
         q = f['question']
         a = f['answer']
-        # Stile Inline aggiunto per sicurezza massima contro il tema
+        # STILE INLINE AGGIUNTO: Se il CSS si rompe, questo stile vince comunque.
         html_out += f"""
-        <details class="rd-faq-details">
-            <summary style="font-weight: bold; font-size: 1.1rem; cursor: pointer;">{q}</summary>
-            <div class="rd-faq-content">{a}</div>
+        <details class="rd-faq-details" style="border-bottom: 1px solid #eee; padding: 15px 0;">
+            <summary style="font-weight: bold; font-size: 1.1rem; cursor: pointer; list-style: none; display: flex; justify-content: space-between;">
+                <span>{q}</span>
+                <span style="color: #ff9900; font-weight: bold;">+</span>
+            </summary>
+            <div class="rd-faq-content" style="padding-top: 10px; color: #555; line-height: 1.6;">{a}</div>
         </details>
         """
         schema_items.append({
@@ -175,13 +130,11 @@ def generate_faq_html(faqs):
     return html_out, script_tag
 
 def format_article_html(product, local_image_url=None, ai_data=None):
-    """Assembla l'intero articolo HTML"""
     asin = product[1]
     title = product[2]
     price = product[3]
     amazon_image_url = product[5]
     
-    # Estrazione Dati Sicura
     html_body = ai_data.get('html_content', product[6]) if ai_data else product[6]
     score = ai_data.get('final_score', 8.0) if ai_data else 8.0
     badge = ai_data.get('verdict_badge', 'Consigliato') if ai_data else 'Consigliato'
@@ -192,7 +145,7 @@ def format_article_html(product, local_image_url=None, ai_data=None):
     final_image = local_image_url if local_image_url else amazon_image_url
     aff_link = f"https://www.amazon.it/dp/{asin}?tag=recensionedigitale-21"
 
-    # 1. HEADER
+    # HEADER
     header_html = f"""
     <div style="background-color: #fff; border: 1px solid #e1e1e1; padding: 20px; margin-bottom: 30px; border-radius: 8px; display: flex; flex-wrap: wrap; gap: 20px; align-items: center;">
         <div style="flex: 1; text-align: center; min-width: 200px;">
@@ -212,10 +165,9 @@ def format_article_html(product, local_image_url=None, ai_data=None):
     </div>
     """
 
-    # 2. SCORECARD
+    # BLOCCHI
     scorecard_html = generate_scorecard_html(score, badge, sub_scores)
     
-    # 3. VIDEO YOUTUBE
     video_html = ""
     if video_id:
         video_html = f"""
@@ -231,16 +183,12 @@ def format_article_html(product, local_image_url=None, ai_data=None):
         </div>
         """
 
-    # 4. FAQ
     faq_html, faq_schema = generate_faq_html(faqs)
-    
-    # 5. FOOTER
     footer_html = """<hr style="margin: 40px 0;"><p style="font-size: 0.75rem; color: #999; text-align: center;">RecensioneDigitale.it partecipa al Programma Affiliazione Amazon EU.</p>"""
 
     return header_html + html_body + scorecard_html + video_html + faq_html + footer_html + faq_schema
 
 def run_publisher():
-    """Funzione Principale chiamata da main.py"""
     print("🔌 [WP] Controllo coda pubblicazione...")
     conn = None
     try:
@@ -269,7 +217,6 @@ def run_publisher():
 
             print(f"   > Pubblicazione: {title[:30]}...")
 
-            # Caricamento Media
             media_id = upload_image_to_wp(amazon_img, title)
             local_img_url = None
             if media_id:
@@ -278,11 +225,9 @@ def run_publisher():
                     local_img_url = media_info['source_url']
                 except: pass
 
-            # Formattazione
             product_tuple = list(p)
             post_content = format_article_html(product_tuple, local_img_url, ai_data)
             
-            # Schema Product (JSON-LD)
             final_score = ai_data.get('final_score', 8.0)
             schema_product = {
                 "@context": "https://schema.org/", "@type": "Product", "name": title.replace('"', ''),
@@ -293,7 +238,6 @@ def run_publisher():
 
             if not meta_desc: meta_desc = f"Recensione di {title}"
 
-            # Payload WP
             post_data = {
                 'title': f"Recensione: {title}",
                 'content': post_content,
@@ -303,7 +247,6 @@ def run_publisher():
                 'excerpt': meta_desc
             }
 
-            # --- Forzatura Autore ---
             if WP_AUTHOR_ID:
                 post_data['author'] = int(WP_AUTHOR_ID)
                 print(f"     👤 Forzatura Autore ID: {WP_AUTHOR_ID}")
