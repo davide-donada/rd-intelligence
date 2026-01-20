@@ -34,49 +34,59 @@ def genera_recensione_seo(product_data):
     price = product_data.get('price', 0)
     features = product_data.get('features', '')
 
-    print(f"      🧠 [AI] Analizzo severamente: {title[:40]}...")
+    print(f"      🧠 [AI] Scrivo recensione strutturata: {title[:30]}...")
 
-    # PROMPT SPIETATO
+    # PROMPT BLINDATO SULLA STRUTTURA
     prompt_system = """
-    Sei un critico tecnologico severo e incorruttibile per 'RecensioneDigitale.it'.
-    Il tuo compito è giudicare la REALTÀ del prodotto.
+    Sei il Capo Redattore Tecnico di RecensioneDigitale.it.
+    Il tuo compito è scrivere una recensione approfondita, critica e perfettamente formattata in HTML.
     
-    LA TUA FILOSOFIA DI VOTO (SCALA 0-10):
-    - 0-4 (Pessimo/Insufficiente): Materiali scadenti, promesse false, prezzo folle per quello che offre. NON AVER PAURA DI DARE 3 o 4.
-    - 5-6 (Mediocre/Sufficiente): Fa il suo dovere ma nulla di più. Prodotto noioso o con difetti evidenti.
-    - 7-8 (Buono/Ottimo): Prodotto solido, vale il prezzo.
-    - 9-10 (Eccellente/Perfetto): Rivoluzionario, senza difetti. (I 10 devono essere rari).
+    ⚠️ DIVIETO ASSOLUTO DI MARKDOWN:
+    - NON usare MAI asterischi doppi (**Titolo**) per i titoli.
+    - NON usare MAI cancelletti (## Titolo).
+    - DEVI usare i tag HTML: <h2>Per i titoli principali</h2>, <h3>Per i sottotitoli</h3>.
     
-    NON ESSERE GENTILE. Se un prodotto da 20€ promette di essere come un iPhone, distruggilo nella recensione.
+    SCHEMA OBBLIGATORIO ARTICOLO (Segui questo ordine):
+    1. <p>Introduzione discorsiva (chi siamo, cosa testiamo, prime impressioni).</p>
+    2. <h2>Design e Qualità Costruttiva</h2> + <p>Analisi materiali, ergonomia, peso...</p>
+    3. <h2>Caratteristiche Tecniche e Display</h2> + <p>Analisi specifiche, schermo, luminosità...</p>
+    4. <h2>Esperienza d'Uso e Prestazioni</h2> + <p>Come si comporta nell'uso reale? Lag? Velocità?</p>
+    5. <h2>Autonomia e Ricarica</h2> (Se applicabile) o <h2>Funzionalità Extra</h2>
+    6. <h3>✅ Pro</h3> (Usa una lista <ul><li>...</li></ul>)
+    7. <h3>❌ Contro</h3> (Usa una lista <ul><li>...</li></ul>)
     
-    STRUTTURA JSON:
+    TONO DI VOCE:
+    - Terza persona plurale ("Abbiamo testato", "Riteniamo che").
+    - Sii critico: Se costa tanto (sopra 100€) e vale poco, dillo chiaramente.
+    - Sii onesto: Scala voti 0-10 reale. Non aver paura di dare 4 o 5 se meritato.
+    
+    OUTPUT JSON RICHIESTO:
     {
-        "html_content": "...",
-        "meta_description": "...",
+        "html_content": "<p>...</p><h2>Design</h2><p>...</p>...",
+        "meta_description": "Frase SEO di 150 caratteri.",
         "category_id": 123,
         "sub_scores": [
-            {"label": "Qualità Costruttiva", "value": 4.0},
-            {"label": "Prestazioni", "value": 5.5},
-            {"label": "Prezzo", "value": 8.0},
-            {"label": "Funzionalità", "value": 6.0}
+            {"label": "Design", "value": 7.0},
+            {"label": "Prestazioni", "value": 8.0},
+            {"label": "Prezzo", "value": 5.0},
+            {"label": "Qualità", "value": 6.5}
         ],
-        "verdict_badge": "Sconsigliato", 
-        "faqs": [...]
+        "verdict_badge": "Buono",
+        "faqs": [{"question": "...", "answer": "..."}]
     }
-    
-    IMPORTANTE: I 'sub_scores' devono riflettere i difetti. Se scrivi che è plastica scadente, il voto Materiali DEVE essere basso (es. 4.0).
     """
 
     prompt_user = f"""
-    Recensisci questo prodotto:
-    TITOLO: {title}
+    Scrivi la recensione COMPLETA per:
+    PRODOTTO: {title}
     PREZZO: {price}€
-    CARATTERISTICHE: {features}
+    DATI: {features}
     
-    Analizza il rapporto qualità/prezzo.
-    Se è una "cinesata" costosa, puniscilo con voti bassi.
-    Se è un top di gamma perfetto, premialo.
-    Usa la scala intera da 0 a 10.
+    IMPORTANTE:
+    - Voglio almeno 400 parole di testo.
+    - Non fare elenchi puntati lunghi, scrivi paragrafi discorsivi.
+    - SEZIONA il testo con i tag <h2>. Non fare un muro di testo unico.
+    - Valuta severamente il rapporto qualità/prezzo.
     """
 
     try:
@@ -93,24 +103,18 @@ def genera_recensione_seo(product_data):
         content = response.choices[0].message.content
         ai_data = json.loads(content)
         
-        # --- CALCOLO MATEMATICO PURO (Senza Freni) ---
+        # --- CALCOLO MATEMATICO VOTI ---
         if 'sub_scores' in ai_data and len(ai_data['sub_scores']) > 0:
             total = sum(item['value'] for item in ai_data['sub_scores'])
             count = len(ai_data['sub_scores'])
-            
-            # Media matematica esatta
             math_score = total / count
-            
-            # Arrotondamento al mezzo punto (es. 7.0, 7.5, 8.0) per pulizia estetica
-            # Moltiplico per 2, arrotondo, divido per 2.
+            # Arrotondamento al mezzo punto (es. 7.5)
             final_score = round(math_score * 2) / 2
-            
-            # NESSUN LIMITE: Accettiamo tutto da 0.0 a 10.0
             ai_data['final_score'] = final_score
         else:
-            ai_data['final_score'] = 6.0 # Fallback neutro se fallisce
+            ai_data['final_score'] = 6.0
 
-        # Mappatura Categorie (Logica invariata)
+        # Mappatura Categorie
         chosen_cat = ai_data.get('category_id')
         real_cat_id = 1
         if isinstance(chosen_cat, int):
