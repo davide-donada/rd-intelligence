@@ -1,13 +1,12 @@
 import mysql.connector
 import requests
-import base64
-import os
-import re
 import time
+import os
+import random
 from datetime import datetime
-from amazon_hunter import get_amazon_data
+from bs4 import BeautifulSoup
 
-# --- CONFIGURAZIONE ---
+# CONFIGURAZIONE DATABASE
 DB_CONFIG = {
     'user': 'root',
     'password': os.getenv('DB_PASSWORD'),
@@ -16,143 +15,75 @@ DB_CONFIG = {
     'database': 'recensionedigitale'
 }
 
-WP_BASE_URL = "https://www.recensionedigitale.it/wp-json/wp/v2/posts"
-WP_USER = os.getenv('WP_USER', 'davide')
-WP_APP_PASSWORD = os.getenv('WP_PASSWORD')
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+    "Accept-Language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7"
+}
 
-def get_headers():
-    if not WP_APP_PASSWORD: return {}
-    credentials = f"{WP_USER}:{WP_APP_PASSWORD}"
-    token = base64.b64encode(credentials.encode())
-    return {
-        'Authorization': f'Basic {token.decode("utf-8")}',
-        'Content-Type': 'application/json',
-        'User-Agent': 'Mozilla/5.0'
-    }
+def get_amazon_price(asin):
+    url = f"https://www.amazon.it/dp/{asin}"
+    try:
+        response = requests.get(url, headers=HEADERS, timeout=10)
+        if response.status_code != 200: return None
+        
+        soup = BeautifulSoup(response.content, "html.parser")
+        
+        price_whole = soup.find('span', {'class': 'a-price-whole'})
+        price_fraction = soup.find('span', {'class': 'a-price-fraction'})
+        
+        if price_whole:
+            whole = price_whole.text.strip().replace('.', '').replace(',', '')
+            fraction = price_fraction.text.strip() if price_fraction else "00"
+            return float(f"{whole}.{fraction}")
+            
+    except Exception as e:
+        print(f"⚠️ Errore scraping {asin}: {e}")
+    return None
 
 def update_prices_loop():
-    print(f"\n--- 🔄 AVVIO AGGIORNAMENTO PREZZI: {datetime.now().strftime('%H:%M')} ---")
+    print("📉 AVVIO MONITORAGGIO PREZZI (Con Storico)...")
     
     conn = None
     try:
         conn = mysql.connector.connect(**DB_CONFIG)
         cursor = conn.cursor()
         
-        # 1. CERCHIAMO PRODOTTI VECCHI DI ALMENO 12 ORE (e che hanno un wp_post_id)
-        # La query prende solo quelli pubblicati che hanno un ID WP valido
-        query = """
-        SELECT id, asin, current_price, wp_post_id, title 
-        FROM products 
-        WHERE status = 'published' 
-        AND wp_post_id > 0
-        AND last_checked < DATE_SUB(NOW(), INTERVAL 12 HOUR)
-        LIMIT 5
-        """
-        cursor.execute(query)
-        products_to_update = cursor.fetchall()
+        # Prendiamo tutti i prodotti pubblicati
+        cursor.execute("SELECT id, asin, title, current_price FROM products WHERE status = 'published'")
+        products = cursor.fetchall()
         
-        if not products_to_update:
-            print("💤 Nessun prezzo da aggiornare al momento.")
-            return
-
-        print(f"🎯 Trovati {len(products_to_update)} prodotti da aggiornare.")
-
-        for p in products_to_update:
-            db_id = p[0]
-            asin = p[1]
-            old_price = float(p[2])
-            wp_id = p[3]
-            title = p[4]
+        print(f"   Trovati {len(products)} prodotti da controllare.")
+        
+        for p in products:
+            p_id, asin, title, old_price = p
+            print(f"   > Controllo: {asin} - {title[:20]}...")
             
-            print(f"   > Controllo: {title[:20]}... (Vecchio: {old_price}€)")
-
-            # 2. SCARICA DATO FRESCO DA AMAZON
-            new_data = get_amazon_data(asin)
+            new_price = get_amazon_price(asin)
             
-            if not new_data or new_data['price'] == 0:
-                print("     ⚠️ Errore Amazon o prodotto non disponibile. Salto.")
-                continue
+            if new_price and new_price > 0:
+                # 1. Aggiorna Tabella Principale
+                cursor.execute("UPDATE products SET current_price = %s, last_update = NOW() WHERE id = %s", (new_price, p_id))
                 
-            new_price = new_data['price']
-            print(f"     💰 Prezzo attuale: {new_price}€")
-
-            # 3. AGGIORNA SU WORDPRESS (Solo se il prezzo è cambiato o sono passati giorni)
-            # Scarichiamo il contenuto attuale
-            try:
-                wp_resp = requests.get(f"{WP_BASE_URL}/{wp_id}", headers=get_headers())
-                if wp_resp.status_code != 200:
-                    print(f"     ❌ Post WP {wp_id} non trovato.")
-                    continue
+                # 2. Inserisci nello Storico (Logghiamo il prezzo per i grafici futuri)
+                # Ottimizzazione: Salviamo nello storico solo se il prezzo è cambiato o se l'ultima rilevazione è vecchia di 24h?
+                # Per semplicità ora salviamo SEMPRE, così popoli il grafico velocemente.
+                cursor.execute("INSERT INTO price_history (product_id, price) VALUES (%s, %s)", (p_id, new_price))
                 
-                content_raw = wp_resp.json()['content']['rendered']
+                conn.commit()
                 
-                # --- CHIRURGIA REGEX ---
-                # Cerchiamo il pattern del prezzo nell'HTML e lo sostituiamo
-                # Pattern cerca: € <span class="rd-price-val">123.45</span>
-                # O fallback sul vecchio formato semplice
-                
-                # Aggiorna Prezzo
-                new_content = re.sub(
-                    r'€\s*<span class="rd-price-val">[0-9.,]+</span>', 
-                    f'€ <span class="rd-price-val">{new_price}</span>', 
-                    content_raw
-                )
-                
-                # Fallback per vecchi articoli (senza span) - un po' più rischioso ma utile
-                if new_content == content_raw:
-                    new_content = re.sub(
-                        r'€\s*[0-9.,]+</div>', 
-                        f'€ {new_price}</div>', 
-                        content_raw
-                    )
-
-                # Aggiorna Data
-                today_str = datetime.now().strftime("%d/%m/%Y")
-                new_content = re.sub(
-                    r'Prezzo aggiornato al: <span class="rd-date-val">.*?</span>',
-                    f'Prezzo aggiornato al: <span class="rd-date-val">{today_str}</span>',
-                    new_content
-                )
-                # Fallback data vecchia
-                if new_content == content_raw:
-                     new_content = re.sub(
-                        r'Prezzo aggiornato al: [0-9/]+',
-                        f'Prezzo aggiornato al: {today_str}',
-                        new_content
-                    )
-
-                # 4. SALVA SU WP
-                if new_content != content_raw:
-                    update_payload = {
-                        'content': new_content
-                    }
-                    save_resp = requests.post(f"{WP_BASE_URL}/{wp_id}", headers=get_headers(), json=update_payload)
-                    
-                    if save_resp.status_code == 200:
-                        print("     ✅ WP Aggiornato!")
-                        
-                        # 5. AGGIORNA DB LOCALE
-                        cursor.execute("""
-                            UPDATE products 
-                            SET current_price = %s, last_checked = NOW() 
-                            WHERE id = %s
-                        """, (new_price, db_id))
-                        conn.commit()
-                    else:
-                        print(f"     ❌ Errore salvataggio WP: {save_resp.status_code}")
+                diff = new_price - float(old_price)
+                if diff < 0:
+                    print(f"     📉 CALO PREZZO! {old_price} -> {new_price} (-{abs(diff)}€)")
+                elif diff > 0:
+                    print(f"     📈 AUMENTO! {old_price} -> {new_price} (+{diff}€)")
                 else:
-                    print("     💤 Nessuna modifica HTML necessaria (Prezzo/Data identici o Regex fallita).")
-                    # Aggiorniamo comunque il last_checked per non riprovare subito
-                    cursor.execute("UPDATE products SET last_checked = NOW() WHERE id = %s", (db_id,))
-                    conn.commit()
-
-            except Exception as e:
-                print(f"     ❌ Errore update: {e}")
-                
-            time.sleep(5) # Pausa tra un update e l'altro
-
-    except Exception as err:
-        print(f"❌ DB Error: {err}")
+                    print(f"     = Stabile a {new_price}€")
+            
+            # Pausa anti-ban
+            time.sleep(random.uniform(5, 10))
+            
+    except Exception as e:
+        print(f"❌ Errore Loop Prezzi: {e}")
     finally:
         if conn: conn.close()
 

@@ -47,7 +47,6 @@ def upload_image_to_wp(image_url, title):
         img_resp = requests.get(image_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=15)
         if img_resp.status_code != 200: return None
         
-        # Pulizia estrema del nome file per evitare errori latin-1
         safe_title = re.sub(r'[^a-zA-Z0-9]', '-', title)
         safe_title = re.sub(r'-+', '-', safe_title).strip('-')
         filename = f"{safe_title.lower()[:50]}.jpg"
@@ -66,6 +65,45 @@ def upload_image_to_wp(image_url, title):
     except Exception as e:
         print(f"     ⚠️ Errore upload img: {e}")
     return None
+
+# --- NUOVA FUNZIONE: ANALISI PREZZO ---
+def analyze_price_history(product_id, current_price):
+    """
+    Interroga il DB per ottenere lo storico e decidere il verdetto sul prezzo.
+    """
+    try:
+        conn = mysql.connector.connect(**DB_CONFIG)
+        cursor = conn.cursor()
+        # Prendi gli ultimi 30 prezzi registrati
+        cursor.execute("SELECT price FROM price_history WHERE product_id = %s ORDER BY recorded_at DESC LIMIT 30", (product_id,))
+        rows = cursor.fetchall()
+        conn.close()
+
+        if not rows:
+            # Nessuno storico: Neutro
+            return "⚖️ Prezzo Standard", "#6c757d", "Analisi in corso..."
+
+        prices = [float(r[0]) for r in rows]
+        # Aggiungiamo il prezzo attuale se non c'è ancora
+        prices.append(float(current_price))
+        
+        avg_price = sum(prices) / len(prices)
+        min_price = min(prices)
+        current = float(current_price)
+
+        # LOGICA DEL VERDETTO
+        if current <= min_price:
+            return "🔥 OTTIMO PREZZO", "#28a745", "È il prezzo più basso registrato!" # Verde
+        elif current < avg_price:
+            return "✅ BUON PREZZO", "#17a2b8", "Sotto la media storica." # Blu
+        elif current > (avg_price * 1.1):
+            return "⚠️ PREZZO ALTO", "#dc3545", "Consigliamo di aspettare." # Rosso
+        else:
+            return "⚖️ PREZZO MEDIO", "#ffc107", "In linea con il mercato." # Giallo
+
+    except Exception as e:
+        print(f"Err Analisi Prezzi: {e}")
+        return "⚖️ Prezzo Standard", "#6c757d", ""
 
 def generate_scorecard_html(score, badge, sub_scores):
     badge_color = "#28a745"
@@ -108,11 +146,13 @@ def generate_faq_html(faqs):
     return html_out, f'\n<script type="application/ld+json">{json.dumps(schema_json)}</script>'
 
 def format_article_html(product, local_image_url=None, ai_data=None):
+    # Dati DB
+    product_id = product[0]
     asin = product[1]
     title = product[2]
     price = product[3]
     
-    # Se local_image_url non è un URL valido, usa Amazon HD come fallback
+    # Immagine
     if local_image_url and isinstance(local_image_url, str) and local_image_url.startswith('http'):
         final_image = local_image_url
     else:
@@ -126,7 +166,39 @@ def format_article_html(product, local_image_url=None, ai_data=None):
     video_id = ai_data.get('video_id', None)
     aff_link = f"https://www.amazon.it/dp/{asin}?tag=recensionedigitale-21"
 
-    header_html = f"<div style='background-color: #fff; border: 1px solid #e1e1e1; padding: 20px; margin-bottom: 30px; border-radius: 8px; display: flex; flex-wrap: wrap; gap: 20px; align-items: center;'><div style='flex: 1; text-align: center; min-width: 200px;'><a href='{aff_link}' rel='nofollow sponsored' target='_blank'><img src='{final_image}' alt='{title}' style='max-height: 250px; width: auto; object-fit: contain;'></a></div><div style='flex: 1.5; min-width: 250px;'><h2 style='margin-top: 0; font-size: 1.4rem;'>{title}</h2><div style='font-size: 2rem; color: #B12704; font-weight: bold; margin: 10px 0;'>€ {price}</div><a href='{aff_link}' rel='nofollow sponsored' target='_blank' style='background-color: #ff9900; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;'>👉 Vedi Offerta su Amazon</a><p style='font-size: 0.8rem; color: #666; margin-top: 5px;'>Prezzo aggiornato al: {datetime.now().strftime('%d/%m/%Y')}</p></div></div>"
+    # --- CALCOLO ANALISI PREZZO ---
+    # Chiamiamo la funzione che interroga lo storico
+    p_verdict, p_color, p_desc = analyze_price_history(product_id, price)
+    
+    # Widget HTML Prezzo
+    price_widget = f"""
+    <div style="background:{p_color}1a; border-left: 5px solid {p_color}; padding: 10px 15px; margin: 10px 0; border-radius: 4px;">
+        <div style="font-weight: bold; color: {p_color}; text-transform: uppercase; font-size: 0.85rem;">{p_verdict}</div>
+        <div style="font-size: 0.8rem; color: #555;">{p_desc}</div>
+    </div>
+    """
+
+    header_html = f"""
+    <div style='background-color: #fff; border: 1px solid #e1e1e1; padding: 20px; margin-bottom: 30px; border-radius: 8px; display: flex; flex-wrap: wrap; gap: 20px; align-items: center;'>
+        <div style='flex: 1; text-align: center; min-width: 200px;'>
+            <a href='{aff_link}' rel='nofollow sponsored' target='_blank'>
+                <img src='{final_image}' alt='{title}' style='max-height: 250px; width: auto; object-fit: contain;'>
+            </a>
+        </div>
+        <div style='flex: 1.5; min-width: 250px;'>
+            <h2 style='margin-top: 0; font-size: 1.4rem;'>{title}</h2>
+            
+            <div style='font-size: 2rem; color: #B12704; font-weight: bold; margin: 10px 0;'>€ {price}</div>
+            
+            {price_widget}
+            
+            <a href='{aff_link}' rel='nofollow sponsored' target='_blank' style='background-color: #ff9900; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block; margin-top: 10px;'>
+                👉 Vedi Offerta su Amazon
+            </a>
+            <p style='font-size: 0.8rem; color: #666; margin-top: 5px;'>Prezzo aggiornato al: {datetime.now().strftime('%d/%m/%Y')}</p>
+        </div>
+    </div>
+    """
 
     video_html = ""
     if video_id:
@@ -184,6 +256,12 @@ def run_publisher():
             resp = requests.post(f"{WP_API_URL}/posts", headers=get_headers(), json=post_data)
             if resp.status_code == 201:
                 cursor.execute("UPDATE products SET status = 'published' WHERE id = %s", (p[0],))
+                
+                # --- AGGIORNAMENTO CRUCIALE PER IL PREZZO ---
+                # Quando pubblichiamo, salviamo il primo punto nello storico prezzi
+                # così il widget ha almeno un dato (il prezzo di partenza)
+                cursor.execute("INSERT INTO price_history (product_id, price) VALUES (%s, %s)", (p[0], p[3]))
+                
                 conn.commit()
                 print("     ✅ Pubblicato!")
             else:
