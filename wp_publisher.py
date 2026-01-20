@@ -33,30 +33,22 @@ def get_headers():
 def clean_amazon_image_url(url):
     """
     Rimuove i parametri di ridimensionamento di Amazon per ottenere l'immagine FULL HD.
-    Trasforma: .../I/71s+..._AC_SY879_.jpg
-    In:        .../I/71s+....jpg
+    Esempio: trasforma '..._AC_SY879_.jpg' in '....jpg'
     """
     if not url: return None
-    # Regex che cerca il pattern ._AC_..._.jpg e lo rimuove
-    clean_url = re.sub(r'\._AC_.*_\.', '.', url)
-    return clean_url
-
-def get_youtube_thumbnail(video_id):
-    """Ottiene l'URL della copertina HD del video"""
-    if not video_id: return None
-    # Proviamo a prendere la versione massima risoluzione
-    return f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
+    # Regex: cerca qualsiasi cosa tra ._AC_ e _. e lo rimuove
+    try:
+        clean_url = re.sub(r'\._AC_.*_\.', '.', url)
+        return clean_url
+    except:
+        return url
 
 def upload_image_to_wp(image_url, title):
     if not image_url: return None
-    print(f"   📸 Scarico immagine: {title[:20]}...")
+    print(f"   📸 Scarico immagine HD: {title[:20]}...")
     try:
         img_resp = requests.get(image_url, headers={'User-Agent': 'Mozilla/5.0'})
-        
-        # Se l'immagine non esiste (es. maxresdefault non c'è), errore
-        if img_resp.status_code != 200: 
-            print("     ⚠️ Immagine non trovata (404)")
-            return None
+        if img_resp.status_code != 200: return None
         
         filename = f"{title.replace(' ', '-').lower()[:50]}.jpg"
         
@@ -76,7 +68,7 @@ def upload_image_to_wp(image_url, title):
     return None
 
 def generate_scorecard_html(score, badge, sub_scores):
-    """Genera Scorecard + CSS FAQ Dinamico"""
+    """Genera Scorecard + CSS FAQ Blindato (Versione approvata)"""
     badge_color = "#28a745"
     if score < 7: badge_color = "#ffc107"
     if score < 5: badge_color = "#dc3545"
@@ -97,6 +89,7 @@ def generate_scorecard_html(score, badge, sub_scores):
         </div>
         """
 
+    # CSS Minificato per evitare conflitti con WordPress e nascondere il doppio marker
     css_minified = """<style>@keyframes loadBar{from{width:0%}to{width:var(--target-width)}}.rd-bar{--target-width:0%}.rd-faq-details{border-bottom:1px solid #eee!important;padding:15px 0!important;margin:0!important}.rd-faq-details summary{font-weight:700!important;cursor:pointer!important;list-style:none!important;display:flex!important;justify-content:space-between!important;align-items:center!important;font-size:1.1rem!important;color:#222!important;outline:none!important;background:0 0!important}.rd-faq-details summary::-webkit-details-marker{display:none!important}.rd-faq-details summary::after{content:'+'!important;font-size:1.5rem!important;color:#ff9900!important;font-weight:300!important}.rd-faq-details[open] summary::after{content:'-'!important;color:#B12704!important}.rd-faq-content{padding-top:15px!important;color:#555!important;font-size:.95rem!important;line-height:1.6!important}</style>"""
 
     js_script = """<script>document.addEventListener("DOMContentLoaded", function(){var bars=document.querySelectorAll('.rd-bar');bars.forEach(function(bar){bar.style.setProperty('--target-width', bar.getAttribute('data-width'));});});</script>"""
@@ -127,6 +120,7 @@ def generate_faq_html(faqs):
     for f in faqs:
         q = f['question']
         a = f['answer']
+        # Markup HTML semplice per compatibilità con il CSS
         html_out += f"""
         <details class="rd-faq-details">
             <summary>{q}</summary>
@@ -149,8 +143,8 @@ def format_article_html(product, local_image_url=None, ai_data=None):
     asin = product[1]
     title = product[2]
     price = product[3]
-    # Amazon Image PULITA (Alta risoluzione)
-    amazon_image_url = clean_amazon_image_url(product[5])
+    # Usiamo l'immagine locale caricata su WP (che è quella Amazon HD)
+    final_image = local_image_url if local_image_url else clean_amazon_image_url(product[5])
     
     html_body = ai_data.get('html_content', product[6]) if ai_data else product[6]
     score = ai_data.get('final_score', 8.0) if ai_data else 8.0
@@ -159,10 +153,6 @@ def format_article_html(product, local_image_url=None, ai_data=None):
     faqs = ai_data.get('faqs', []) if ai_data else []
     video_id = ai_data.get('video_id', None) if ai_data else None
 
-    # Se abbiamo caricato un'immagine locale (magari la Thumb YouTube), usiamo quella per l'header?
-    # NO: Per l'articolo interno è meglio l'immagine PULITA del prodotto su fondo bianco (Amazon).
-    # La Thumb YouTube la usiamo solo come "Featured Image" (copertina del post).
-    final_image = amazon_image_url 
     aff_link = f"https://www.amazon.it/dp/{asin}?tag=recensionedigitale-21"
 
     # HEADER
@@ -230,30 +220,27 @@ def run_publisher():
 
             p_id = p[0]
             title = p[2]
-            amazon_img = p[4]
+            raw_amazon_img = p[4]
             cat_id = p[6]
             meta_desc = p[7]
-            video_id = ai_data.get('video_id', None)
 
             print(f"   > Pubblicazione: {title[:30]}...")
 
-            # --- STRATEGIA IMMAGINI ---
-            # 1. Cerchiamo la Copertina YouTube (Priorità come Featured Image)
-            featured_media_id = None
-            if video_id:
-                print("     🎥 Tento download copertina YouTube...")
-                yt_thumb_url = get_youtube_thumbnail(video_id)
-                featured_media_id = upload_image_to_wp(yt_thumb_url, title + " Review")
+            # 1. Pulizia URL per avere l'HD
+            hd_amazon_img = clean_amazon_image_url(raw_amazon_img)
             
-            # 2. Se YouTube fallisce, usiamo Amazon (versione HD pulita)
-            if not featured_media_id:
-                print("     📦 Uso immagine Amazon...")
-                hd_amazon_img = clean_amazon_image_url(amazon_img)
-                featured_media_id = upload_image_to_wp(hd_amazon_img, title)
+            # 2. Caricamento su WP (come Featured Image e per uso interno)
+            featured_media_id = upload_image_to_wp(hd_amazon_img, title)
+            
+            local_img_url = None
+            if featured_media_id:
+                try:
+                    media_info = requests.get(f"{WP_API_URL}/media/{featured_media_id}", headers=get_headers()).json()
+                    local_img_url = media_info['source_url']
+                except: pass
 
-            # Per l'articolo interno, non serve l'URL locale, usiamo l'URL Amazon HD diretto
             product_tuple = list(p)
-            post_content = format_article_html(product_tuple, None, ai_data)
+            post_content = format_article_html(product_tuple, local_img_url, ai_data)
             
             final_score = ai_data.get('final_score', 8.0)
             schema_product = {
