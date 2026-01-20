@@ -150,7 +150,7 @@ def format_article_html(product, local_image_url=None, ai_data=None):
     badge = ai_data.get('verdict_badge', 'Consigliato')
     sub_scores = ai_data.get('sub_scores', [])
     faqs = ai_data.get('faqs', [])
-    video_id = ai_data.get('video_id', None)
+    video_id = ai_data.get('video_id', None) # Se è nel JSON lo usiamo
     aff_link = f"https://www.amazon.it/dp/{asin}?tag=recensionedigitale-21"
 
     # Analisi Prezzo
@@ -175,6 +175,7 @@ def run_publisher():
     try:
         conn = mysql.connector.connect(**DB_CONFIG)
         cursor = conn.cursor()
+        # Selezioniamo anche CATEGORY_ID e VIDEO_ID (se l'hai salvato in JSON ai_sentiment)
         cursor.execute("SELECT id, asin, title, current_price, image_url, ai_sentiment, category_id, meta_desc FROM products WHERE status = 'draft'")
         products = cursor.fetchall()
         
@@ -186,6 +187,19 @@ def run_publisher():
 
             print(f"   > Pubblicazione: {p[2][:30]}...")
             
+            # --- FIX CATEGORIA ---
+            cat_id = p[6] # Colonna category_id dal DB
+            if cat_id is None: 
+                cat_id = 1
+            
+            # Forziamo a intero per WordPress
+            try:
+                cat_id = int(cat_id)
+            except:
+                cat_id = 1
+            
+            print(f"     📂 Categoria per WP: {cat_id}")
+
             hd_url = clean_amazon_image_url(p[4])
             media_id = upload_image_to_wp(hd_url, p[2])
             
@@ -202,11 +216,12 @@ def run_publisher():
             schema_p = {"@context": "https://schema.org/", "@type": "Product", "name": p[2], "review": {"@type": "Review", "reviewRating": {"@type": "Rating", "ratingValue": str(final_score)}, "author": {"@type": "Person", "name": "Redazione RD"}}}
             post_content += f'\n<script type="application/ld+json">{json.dumps(schema_p)}</script>'
 
+            # PREPARAZIONE DATI POST
             post_data = {
                 'title': f"Recensione: {p[2]}",
                 'content': post_content,
                 'status': 'draft', 
-                'categories': [p[6]],
+                'categories': [cat_id], # <--- QUI ORA È SICURO UN NUMERO
                 'featured_media': media_id if media_id else 0,
                 'excerpt': p[7]
             }
@@ -215,8 +230,7 @@ def run_publisher():
             resp = requests.post(f"{WP_API_URL}/posts", headers=get_headers(), json=post_data)
             if resp.status_code == 201:
                 cursor.execute("UPDATE products SET status = 'published' WHERE id = %s", (p[0],))
-                # INIZIALIZZAZIONE STORICO PREZZI (Fondamentale!)
-                # Quando pubblichiamo, salviamo il primo punto nello storico
+                # INIZIALIZZAZIONE STORICO
                 cursor.execute("INSERT INTO price_history (product_id, price) VALUES (%s, %s)", (p[0], p[3]))
                 conn.commit()
                 print("     ✅ Pubblicato e Iniziato Tracking!")
