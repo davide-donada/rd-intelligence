@@ -1,126 +1,170 @@
 import mysql.connector
 import os
-import sys
+import time
 
-# CONFIGURAZIONE (Assicurati che sia uguale agli altri script)
+# --- CONFIGURAZIONE ---
 DB_CONFIG = {
     'user': 'root',
-    'password': 'FfEivO8tgJSGWkxEV84g4qIVvmZgspy8lnnS3O4eHiyZdM5vPq9cVg1ZemSDKHZL', # O inserisci la password tra virgolette
-    'host': '80.211.135.46',
+    'password': 'FfEivO8tgJSGWkxEV84g4qIVvmZgspy8lnnS3O4eHiyZdM5vPq9cVg1ZemSDKHZL',
+    'host': os.getenv('DB_HOST', '80.211.135.46'),
     'port': 3306,
     'database': 'recensionedigitale'
 }
 
 def get_db_connection():
-    try:
-        return mysql.connector.connect(**DB_CONFIG)
-    except Exception as e:
-        print(f"❌ Errore di connessione al DB: {e}")
-        return None
+    return mysql.connector.connect(**DB_CONFIG)
 
-def show_stats():
+def clear_screen():
+    os.system('cls' if os.name == 'nt' else 'clear')
+
+def show_status():
     conn = get_db_connection()
-    if not conn: return
-
     cursor = conn.cursor()
-    
-    # Conta Pending
-    cursor.execute("SELECT COUNT(*) FROM hunting_list WHERE status='pending'")
-    pending = cursor.fetchone()[0]
-    
-    # Conta Processing
-    cursor.execute("SELECT COUNT(*) FROM hunting_list WHERE status='processing'")
-    processing = cursor.fetchone()[0]
 
-    print("\n" + "="*40)
-    print(f"📊 STATO SERVER:")
-    print(f"   ⏳ In Coda (Pending):      {pending}")
-    print(f"   ⚙️  In Lavorazione (Ora):   {processing}")
-    print("="*40)
-    conn.close()
-
-def show_latest_published():
-    conn = get_db_connection()
-    if not conn: return
-    cursor = conn.cursor()
+    # Conteggi
+    cursor.execute("SELECT status, COUNT(*) FROM products GROUP BY status")
+    stats = dict(cursor.fetchall())
     
+    pending = stats.get('pending', 0)
+    processing = stats.get('processing', 0)
+    published = stats.get('published', 0)
+    failed = stats.get('failed', 0)
+    draft = stats.get('draft', 0)
+
+    print("\n📊 STATO SERVER:")
+    print(f"   ⏳ In Coda (Pending):       {pending}")
+    print(f"   ⚙️  In Lavorazione (Ora):    {processing}")
+    print(f"   📝 Bozze (Draft):           {draft}")
+    print(f"   ✅ Pubblicati Totali:       {published}")
+    print("========================================")
+
+    # Ultimi Pubblicati
     print("\n✅ ULTIMI 5 PUBBLICATI:")
-    # Prende gli ultimi 5 con status 'published'
-    cursor.execute("SELECT asin, title, current_price, last_checked FROM products WHERE status='published' ORDER BY last_checked DESC LIMIT 5")
-    rows = cursor.fetchall()
-    
-    if not rows:
-        print("   (Nessun articolo pubblicato)")
-    else:
-        for r in rows:
-            titolo = r[1][:40] + "..." if len(r[1]) > 40 else r[1]
-            print(f"   DATE: {r[3].strftime('%H:%M')} | {r[0]} | {titolo} | € {r[2]}")
-    conn.close()
+    cursor.execute("SELECT asin, title, current_price, last_update FROM products WHERE status = 'published' ORDER BY last_update DESC LIMIT 5")
+    recents = cursor.fetchall()
+    for r in recents:
+        asin = r[0]
+        title = r[1][:40] + "..." if r[1] else "No Title"
+        price = r[2]
+        date_str = r[3].strftime("%H:%M") if r[3] else "--:--"
+        print(f"   TIME: {date_str} | {asin} | {title} | € {price}")
 
-def show_errors():
-    conn = get_db_connection()
-    if not conn: return
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT asin, status FROM hunting_list WHERE status='error' ORDER BY id DESC LIMIT 5")
-    rows = cursor.fetchall()
-    
-    if rows:
-        print("\n❌ ULTIMI ERRORI (Verifica questi ASIN):")
-        for r in rows:
-            print(f"   ASIN: {r[0]}")
+    # Ultimi Errori
+    if failed > 0:
+        print(f"\n❌ ULTIMI ERRORI (Totale: {failed}):")
+        cursor.execute("SELECT asin FROM products WHERE status = 'failed' ORDER BY id DESC LIMIT 5")
+        errors = cursor.fetchall()
+        for e in errors:
+            print(f"   ASIN: {e[0]}")
+
     conn.close()
 
 def add_asin():
-    asin = input("\n📝 Inserisci ASIN (o 'q' per uscire): ").strip()
-    if asin.lower() == 'q' or asin == "": return
+    asin_input = input("\nInserisci ASIN (o lista separata da virgola): ").strip()
+    if not asin_input: return
+
+    asins = [x.strip() for x in asin_input.split(',')]
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    added = 0
+    for asin in asins:
+        if len(asin) < 10: continue
+        try:
+            # Controllo duplicati
+            cursor.execute("SELECT id FROM products WHERE asin = %s", (asin,))
+            if cursor.fetchone():
+                print(f"   ⚠️  {asin} esiste già.")
+            else:
+                cursor.execute("INSERT INTO products (asin, status) VALUES (%s, 'pending')", (asin,))
+                added += 1
+                print(f"   ✅ {asin} aggiunto.")
+        except Exception as e:
+            print(f"   ❌ Errore {asin}: {e}")
+
+    conn.commit()
+    conn.close()
+    print(f"\n--- Aggiunti {added} nuovi prodotti ---")
+    time.sleep(1.5)
+
+def delete_asin():
+    """Permette di cancellare un ASIN specifico o di pulire tutti gli errori"""
+    target = input("\n🗑️  Inserisci ASIN da cancellare (oppure scrivi 'failed' per pulire tutti gli errori): ").strip()
+    
+    if not target: return
 
     conn = get_db_connection()
-    if not conn: return
+    cursor = conn.cursor()
+
+    try:
+        if target.lower() == 'failed':
+            cursor.execute("DELETE FROM products WHERE status = 'failed'")
+            print(f"   🧹 Pulizia completata! Cancellati {cursor.rowcount} prodotti falliti.")
+        else:
+            cursor.execute("DELETE FROM products WHERE asin = %s", (target,))
+            if cursor.rowcount > 0:
+                print(f"   🗑️  ASIN {target} eliminato dal database.")
+            else:
+                print(f"   ⚠️  ASIN {target} non trovato.")
+        
+        conn.commit()
+    except Exception as e:
+        print(f"❌ Errore DB: {e}")
+    finally:
+        conn.close()
+    
+    input("\nPremi INVIO per tornare al menu...")
+
+def reset_stuck_products():
+    """Sblocca i prodotti rimasti in 'processing' per errore"""
+    print("\n🚑 Tentativo di sblocco coda...")
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     try:
-        # Controlla se esiste già
-        cursor.execute("SELECT status FROM hunting_list WHERE asin = %s", (asin,))
-        exists = cursor.fetchone()
+        # Riporta tutto ciò che è 'processing' a 'pending'
+        cursor.execute("UPDATE products SET status = 'pending' WHERE status = 'processing'")
+        count = cursor.rowcount
+        conn.commit()
         
-        if exists:
-            print(f"⚠️  ASIN {asin} è già in lista (Stato: {exists[0]}).")
+        if count > 0:
+            print(f"   ✅ Sbloccati {count} prodotti! Ora sono di nuovo in coda (Pending).")
+            print("      Il bot li riprocesserà al prossimo giro.")
         else:
-            cursor.execute("INSERT INTO hunting_list (asin, status) VALUES (%s, 'pending')", (asin,))
-            conn.commit()
-            print(f"✅ ASIN {asin} aggiunto alla coda!")
+            print("   👍 Nessun prodotto bloccato trovato.")
+            
     except Exception as e:
-        print(f"❌ Errore: {e}")
+        print(f"❌ Errore DB: {e}")
     finally:
         conn.close()
+    
+    input("\nPremi INVIO per tornare al menu...")
 
-def main_menu():
+def main_loop():
     while True:
-        # Pulisce schermo (opzionale, rimuovi se dà problemi su Windows)
-        # os.system('cls' if os.name == 'nt' else 'clear') 
-        
-        show_stats()
-        show_latest_published()
-        show_errors()
-        
-        print("\nCOMMANDI:")
+        clear_screen()
+        show_status()
+        print("\nCOMANDI:")
         print(" [1] Aggiungi Nuovo ASIN")
         print(" [2] Aggiorna Vista")
+        print(" [3] 🗑️  Cancella ASIN (o pulisci errori)")
+        print(" [4] 🚑 Sblocca 'In Lavorazione' (Reset)")
         print(" [q] Esci")
         
-        scelta = input("\n👉 Scelta: ").strip().lower()
+        choice = input("\nScelta > ").strip().lower()
         
-        if scelta == '1':
+        if choice == '1':
             add_asin()
-        elif scelta == '2':
-            continue # Ricarica il loop e quindi le statistiche
-        elif scelta == 'q':
-            print("👋 Ciao Direttore.")
+        elif choice == '2':
+            continue
+        elif choice == '3':
+            delete_asin()
+        elif choice == '4':
+            reset_stuck_products()
+        elif choice == 'q':
+            print("Bye Direttore! 👋")
             break
-        else:
-            print("Comando non valido.")
 
 if __name__ == "__main__":
-    print("🖥️  RECENSIONE DIGITALE - CONTROL TOWER v2")
-    main_menu()
+    main_loop()
