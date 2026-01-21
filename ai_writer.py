@@ -35,14 +35,24 @@ def genera_recensione_seo(product_data):
     prompt_system = f"""
     Sei il Capo Redattore di RecensioneDigitale.it. Scrivi in HTML (usa <h2>, <h3>, <p>, <ul>).
     MAI usare markdown (**grassetto** o # Titolo).
-    Sii critico, voti 0-10 reali basati sul prezzo ({price}€).
+    
+    REGOLE CRITICHE:
+    1. Voti 0-10 reali. Sii severo se il prezzo ({price}€) è alto.
+    2. NON scrivere il voto finale o i voti parziali dentro il testo HTML.
+    3. Il testo deve finire con la conclusione discorsiva.
+    
     Scegli una categoria tra: [{cat_list}].
     
     JSON: {{
         "html_content": "...",
         "meta_description": "...",
         "category_id": "NomeCategoria",
-        "sub_scores": [{{ "label": "Qualità", "value": 7 }}],
+        "sub_scores": [
+            {{ "label": "Qualità Costruttiva", "value": 6.5 }},
+            {{ "label": "Prestazioni", "value": 8.0 }},
+            {{ "label": "Rapporto Qualità/Prezzo", "value": 5.0 }},
+            {{ "label": "Facilità d'uso", "value": 7.5 }}
+        ],
         "verdict_badge": "Consigliato",
         "faqs": []
     }}
@@ -51,17 +61,19 @@ def genera_recensione_seo(product_data):
     try:
         response = client.chat.completions.create(
             model="gpt-4o",
-            messages=[{"role": "system", "content": prompt_system}, {"role": "user", "content": title}],
+            messages=[{"role": "system", "content": prompt_system}, {"role": "user", "content": f"Prodotto: {title}. Dati: {features}"}],
             response_format={"type": "json_object"}
         )
         data = json.loads(response.choices[0].message.content)
         
-        # Calcolo media voti
-        voti = [s['value'] for s in data['sub_scores']]
+        # Calcolo media voti dinamica
+        voti = [s['value'] for s in data.get('sub_scores', [])]
         data['final_score'] = round(sum(voti)/len(voti), 1) if voti else 6.0
         
         # Match categoria
         name = data.get('category_id')
         data['category_id'] = CATEGORIES_MAP.get(name, 1)
         return data
-    except: return None
+    except Exception as e:
+        print(f"Errore AI: {e}")
+        return None
