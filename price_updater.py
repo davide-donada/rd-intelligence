@@ -41,29 +41,68 @@ def get_amazon_price(asin):
         print(f"   ⚠️ Errore scraping ASIN {asin}: {e}")
     return None
 
-def update_wp_post_price(wp_post_id, new_price):
-    """Aggiorna il contenuto del post su WP per riflettere il nuovo prezzo"""
+def update_wp_post_price(wp_post_id, old_price, new_price):
+    """
+    Aggiorna il contenuto del post su WP cercando specificamente il vecchio prezzo
+    e sostituendolo con il nuovo, gestendo sia formati 100.00 che 100,00.
+    """
     if not wp_post_id or wp_post_id == 0: return
     
     headers = get_wp_headers()
     try:
         # 1. Recupera il post attuale
         resp = requests.get(f"{WP_API_URL}/posts/{wp_post_id}", headers=headers)
-        if resp.status_code != 200: return
+        if resp.status_code != 200: 
+            print(f"      ❌ Errore API WP (Get): {resp.status_code}")
+            return
         
         post_data = resp.json()
         content = post_data['content']['rendered']
+        original_content_len = len(content)
         
-        # 2. Sostituzione del prezzo nel widget (cerchiamo il pattern € XX.XX)
-        # Questa regex cerca il prezzo dentro il tuo template HTML
-        updated_content = re.sub(r'€\s?\d+[\.,]\d{2}', f'€ {new_price:.2f}', content)
+        # Preparazione stringhe prezzi (Nuovo)
+        new_str_dot = f"{new_price:.2f}"        # 103.97
+        new_str_comma = new_str_dot.replace('.', ',') # 103,97
         
-        # 3. Push dell'aggiornamento
-        update_data = {'content': updated_content}
-        requests.post(f"{WP_API_URL}/posts/{wp_post_id}", headers=headers, json=update_data)
-        print(f"      ✨ WordPress Aggiornato (ID: {wp_post_id})")
+        # Preparazione stringhe prezzi (Vecchio) - Convertiamo float in stringa
+        old_float = float(old_price)
+        old_str_dot = f"{old_float:.2f}"        # 105.06
+        old_str_comma = old_str_dot.replace('.', ',') # 105,06
+        
+        # 2. STRATEGIA CHIRURGICA: Cerca e sostituisci il numero esatto
+        # Tentativo A: Formato con virgola (comune in Italia/WP) -> "105,06"
+        if old_str_comma in content:
+            print(f"      🔧 Trovato formato virgola ({old_str_comma}), sostituisco...")
+            content = content.replace(old_str_comma, new_str_comma)
+            
+        # Tentativo B: Formato con punto -> "105.06"
+        elif old_str_dot in content:
+            print(f"      🔧 Trovato formato punto ({old_str_dot}), sostituisco...")
+            content = content.replace(old_str_dot, new_str_dot)
+            
+        # Tentativo C: Fallback generico (se il vecchio prezzo non si trova esattamente)
+        else:
+            print(f"      ⚠️ Vecchio prezzo esatto non trovato nel testo. Provo regex generica...")
+            # Cerca pattern tipo "€ 105,06" o "€105.06"
+            content = re.sub(r'€\s?\d+[\.,]\d{2}', f'€ {new_str_comma}', content)
+
+        # 3. Aggiorna la data se presente (solo per articoli nuovi con layout avanzato)
+        today_str = datetime.now().strftime('%d/%m/%Y')
+        content = re.sub(r'Prezzo aggiornato al: \d{2}/\d{2}/\d{4}', f'Prezzo aggiornato al: {today_str}', content)
+
+        # 4. Push dell'aggiornamento solo se il contenuto è cambiato
+        if len(content) != original_content_len or old_str_comma not in content: 
+            update_data = {'content': content}
+            up_resp = requests.post(f"{WP_API_URL}/posts/{wp_post_id}", headers=headers, json=update_data)
+            if up_resp.status_code == 200:
+                print(f"      ✨ WordPress Aggiornato con successo (ID: {wp_post_id})")
+            else:
+                print(f"      ❌ Errore salvataggio WP: {up_resp.text}")
+        else:
+            print("      ⚠️ Nessuna modifica effettuata al testo (prezzo non trovato?).")
+
     except Exception as e:
-        print(f"      ❌ Errore aggiornamento WP: {e}")
+        print(f"      ❌ Errore critico aggiornamento WP: {e}")
 
 def run_price_monitor():
     print(f"🚀 [{datetime.now().strftime('%H:%M:%S')}] MONITORAGGIO PREZZI AVVIATO...")
@@ -74,7 +113,7 @@ def run_price_monitor():
             conn = mysql.connector.connect(**DB_CONFIG)
             cursor = conn.cursor()
             
-            # Seleziona solo i prodotti già pubblicati
+            # Seleziona prodotti pubblicati
             cursor.execute("SELECT id, asin, current_price, wp_post_id FROM products WHERE status = 'published'")
             products = cursor.fetchall()
             
@@ -83,23 +122,24 @@ def run_price_monitor():
             for p_id, asin, old_price, wp_id in products:
                 new_price = get_amazon_price(asin)
                 
+                # Controllo se il prezzo è valido e se è cambiato (soglia 1 centesimo)
                 if new_price and abs(float(old_price) - new_price) > 0.01:
                     print(f"   💰 {asin}: CAMBIATO! €{old_price} -> €{new_price}")
                     
-                    # Aggiorna Database
+                    # 1. Aggiorna Database
                     cursor.execute("UPDATE products SET current_price = %s WHERE id = %s", (new_price, p_id))
                     cursor.execute("INSERT INTO price_history (product_id, price) VALUES (%s, %s)", (p_id, new_price))
                     conn.commit()
                     
-                    # Aggiorna l'articolo su WordPress
-                    update_wp_post_price(wp_id, new_price)
+                    # 2. Aggiorna WordPress (passando anche il vecchio prezzo per trovarlo!)
+                    update_wp_post_price(wp_id, old_price, new_price)
                 else:
                     print(f"   ⚖️ {asin}: Stabile (€{old_price})")
                 
-                time.sleep(15) # Pausa per non essere bannati da Amazon
+                time.sleep(15) # Pausa anti-ban
                 
             print(f"✅ Giro completato. Prossimo controllo tra 1 ora.")
-            time.sleep(3600) # Attendi 1 ora
+            time.sleep(3600) 
             
         except Exception as e:
             print(f"❌ Errore monitor: {e}")
