@@ -42,73 +42,79 @@ def get_amazon_price(asin):
     return None
 
 def update_wp_post_price(wp_post_id, old_price, new_price):
-    """
-    Aggiorna il contenuto del post su WP cercando il blocco HTML specifico del prezzo
-    e forzandone l'aggiornamento, ignorando il vecchio valore.
-    """
     if not wp_post_id or wp_post_id == 0: return
     
     headers = get_wp_headers()
     try:
         # 1. Recupera il post attuale
-        resp = requests.get(f"{WP_API_URL}/posts/{wp_post_id}", headers=headers)
-        if resp.status_code != 200: 
-            print(f"      ❌ Errore API WP (Get): {resp.status_code}")
-            return
+        resp = requests.get(f"{WP_API_URL}/posts/{wp_post_id}?context=edit", headers=headers)
+        if resp.status_code != 200: return
         
         post_data = resp.json()
-        content = post_data['content']['rendered']
+        content = post_data['content']['raw'] # Usiamo 'raw' per evitare filtri di rendering
         original_content = content
         
-        # Formattazione prezzi
-        new_str_comma = f"{new_price:.2f}".replace('.', ',') # Es: 104,02
         new_str_dot = f"{new_price:.2f}" # Es: 104.02
         
-        # --- 2. SOSTITUZIONE CHIRURGICA (TARGET HTML) ---
-        # Cerchiamo esattamente il tag <p> rosso generato dal publisher.
-        # Regex che cerca: <p style='...color:#B12704...'><strong>€ [QUALSIASI COSA]</strong></p>
+        # --- REGEX ROBUSTA ---
+        # 1. Cerca il blocco <p> col colore rosso (#B12704).
+        # 2. Accetta sia ' che " come delimitatori.
+        # 3. Accetta spazi variabili (\s*) nel CSS.
+        # 4. Cattura il prezzo vecchio qualsiasi esso sia.
         
-        pattern_header = r"(<p style='font-size:1\.8rem; color:#B12704; margin-bottom:5px;'><strong>€\s?)([\d\.,]+)(</strong></p>)"
+        pattern = r"(<p[^>]*color:\s?#B12704[^>]*>\s*<strong>\s*€\s?)([\d\.,]+)(\s*</strong>\s*</p>)"
         
-        # Sostituiamo il gruppo 2 (il numero vecchio) con il nuovo prezzo
-        # Usiamo il formato con punto (Amazon style) o virgola? Usiamo quello che preferisci (qui metto punto per coerenza col DB)
-        content = re.sub(pattern_header, f"\\1{new_str_dot}\\3", content)
-        
-        # --- 3. Aggiornamento Data ---
+        # Sostituzione
+        if re.search(pattern, content):
+            content = re.sub(pattern, f"\\1{new_str_dot}\\3", content)
+        else:
+            print(f"      ⚠️ Pattern HTML prezzo non trovato (Il layout è cambiato?)")
+            # Fallback brutale: cerca solo il prezzo vecchio esatto se la struttura fallisce
+            old_str_search = f"€ {old_price:.2f}".replace('.', ',')
+            if old_str_search in content:
+                content = content.replace(old_str_search, f"€ {new_str_dot}")
+
+        # Aggiornamento Data
         today_str = datetime.now().strftime('%d/%m/%Y')
         content = re.sub(r'Prezzo aggiornato al: \d{2}/\d{2}/\d{4}', f'Prezzo aggiornato al: {today_str}', content)
 
-        # --- 4. Fallback per il prezzo nello Schema JSON (invisibile ma utile per SEO) ---
-        # Cerca: "price": "104.00" e sostituisce con "price": "104.02"
+        # Aggiornamento Schema JSON (Prezzo invisibile)
         schema_pattern = r'("price":\s?")([\d\.]+)(",)'
         content = re.sub(schema_pattern, f'\\1{new_str_dot}\\3', content)
 
-        # 5. Push dell'aggiornamento
+        # 2. INVIO DATI
         if content != original_content: 
             update_data = {'content': content}
             up_resp = requests.post(f"{WP_API_URL}/posts/{wp_post_id}", headers=headers, json=update_data)
+            
             if up_resp.status_code == 200:
-                print(f"      ✨ WordPress Aggiornato (ID: {wp_post_id}) -> € {new_str_dot}")
+                print(f"      ✨ WP Command Sent (ID: {wp_post_id}) -> € {new_str_dot}")
                 
-                # --- AUTO-FLUSH CACHE (Trucco per forzare aggiornamento) ---
-                # A volte basta salvare di nuovo per pulire la cache di WP
+                # 3. VERIFICA REALE
+                # Rileggiamo il post per vedere se il DB l'ha preso davvero
+                check_resp = requests.get(f"{WP_API_URL}/posts/{wp_post_id}?context=edit", headers=headers)
+                final_content = check_resp.json()['content']['raw']
+                
+                if str(new_str_dot) in final_content:
+                     print(f"      ✅ VERIFICA OK: Il prezzo nel DB è {new_str_dot}")
+                else:
+                     print(f"      💀 VERIFICA FALLITA: WordPress ha rifiutato la modifica!")
             else:
-                print(f"      ❌ Errore salvataggio WP: {up_resp.text}")
+                print(f"      ❌ Errore API: {up_resp.text}")
         else:
-            print("      ⚠️ Nessuna modifica HTML rilevata (Regex non ha trovato il blocco?).")
+            print("      ⚠️ Nessuna modifica necessaria (Già aggiornato?).")
 
     except Exception as e:
-        print(f"      ❌ Errore critico aggiornamento WP: {e}")
+        print(f"      ❌ Errore critico: {e}")
 
 def run_price_monitor():
-    print(f"🚀 [{datetime.now().strftime('%H:%M:%S')}] MONITORAGGIO PREZZI (Versione Chirurgica) AVVIATO...")
+    print(f"🚀 [{datetime.now().strftime('%H:%M:%S')}] MONITORAGGIO (V.ROBUSTA) AVVIATO...")
     
     while True:
         conn = None
         try:
             conn = mysql.connector.connect(**DB_CONFIG)
             cursor = conn.cursor()
-            
             cursor.execute("SELECT id, asin, current_price, wp_post_id FROM products WHERE status = 'published'")
             products = cursor.fetchall()
             
@@ -128,10 +134,10 @@ def run_price_monitor():
                 else:
                     print(f"   ⚖️ {asin}: Stabile (€{old_price})")
                 
-                time.sleep(15) 
+                time.sleep(15)
                 
             print(f"✅ Giro completato. Pausa 1 ora.")
-            time.sleep(3600) 
+            time.sleep(3600)
             
         except Exception as e:
             print(f"❌ Errore monitor: {e}")
