@@ -2,7 +2,6 @@ import mysql.connector
 import requests
 import time
 import os
-import json
 import re
 from bs4 import BeautifulSoup
 from datetime import datetime
@@ -46,69 +45,79 @@ def update_wp_post_price(wp_post_id, old_price, new_price):
     
     headers = get_wp_headers()
     try:
-        # 1. Recupera il post attuale
+        # 1. Recupera il post (raw content)
         resp = requests.get(f"{WP_API_URL}/posts/{wp_post_id}?context=edit", headers=headers)
         if resp.status_code != 200: return
         
         post_data = resp.json()
-        content = post_data['content']['raw'] # Usiamo 'raw' per evitare filtri di rendering
+        content = post_data['content']['raw']
         original_content = content
         
-        new_str_dot = f"{new_price:.2f}" # Es: 104.02
+        # Formattazione stringhe
+        new_str_dot = f"{new_price:.2f}"        # 432.61
+        new_str_comma = new_str_dot.replace('.', ',') # 432,61
         
-        # --- REGEX ROBUSTA ---
-        # 1. Cerca il blocco <p> col colore rosso (#B12704).
-        # 2. Accetta sia ' che " come delimitatori.
-        # 3. Accetta spazi variabili (\s*) nel CSS.
-        # 4. Cattura il prezzo vecchio qualsiasi esso sia.
+        old_str_dot = f"{float(old_price):.2f}" # 432.64
+        old_str_comma = old_str_dot.replace('.', ',') # 432,64
         
+        print(f"      🔎 Cerco vecchio prezzo: {old_str_dot} o {old_str_comma}")
+
+        # --- STRATEGIA 1: REGEX STRUTTURALE (Case Insensitive) ---
+        # Cerca il blocco rosso tipico, ma ignorando maiuscole/minuscole nel colore
         pattern = r"(<p[^>]*color:\s?#B12704[^>]*>\s*<strong>\s*€\s?)([\d\.,]+)(\s*</strong>\s*</p>)"
         
-        # Sostituzione
-        if re.search(pattern, content):
-            content = re.sub(pattern, f"\\1{new_str_dot}\\3", content)
+        match = re.search(pattern, content, re.IGNORECASE)
+        if match:
+            print("      🔧 Strategia 1 (Regex HTML) attivata.")
+            content = re.sub(pattern, f"\\1{new_str_dot}\\3", content, flags=re.IGNORECASE)
         else:
-            print(f"      ⚠️ Pattern HTML prezzo non trovato (Il layout è cambiato?)")
-            # Fallback brutale: cerca solo il prezzo vecchio esatto se la struttura fallisce
-            old_str_search = f"€ {old_price:.2f}".replace('.', ',')
-            if old_str_search in content:
-                content = content.replace(old_str_search, f"€ {new_str_dot}")
+            # --- STRATEGIA 2: SOSTITUZIONE DIRETTA (BRUTE FORCE) ---
+            print("      ⚠️ HTML cambiato, passo a Strategia 2 (Sostituzione Diretta).")
+            
+            # Cerca il vecchio numero esatto nel testo e cambialo
+            # Nota: Sostituiamo solo se troviamo il numero esatto per evitare danni
+            if old_str_comma in content:
+                print(f"      🔧 Trovato {old_str_comma}, sostituisco con {new_str_comma}")
+                content = content.replace(old_str_comma, new_str_comma)
+            elif old_str_dot in content:
+                print(f"      🔧 Trovato {old_str_dot}, sostituisco con {new_str_dot}")
+                content = content.replace(old_str_dot, new_str_dot)
+            else:
+                print(f"      ❌ IMPOSSIBILE TROVARE IL VECCHIO PREZZO NEL TESTO.")
 
-        # Aggiornamento Data
+        # Aggiornamento Data (Funziona sempre)
         today_str = datetime.now().strftime('%d/%m/%Y')
         content = re.sub(r'Prezzo aggiornato al: \d{2}/\d{2}/\d{4}', f'Prezzo aggiornato al: {today_str}', content)
 
-        # Aggiornamento Schema JSON (Prezzo invisibile)
+        # Aggiornamento Schema JSON (Invisibile)
         schema_pattern = r'("price":\s?")([\d\.]+)(",)'
         content = re.sub(schema_pattern, f'\\1{new_str_dot}\\3', content)
 
-        # 2. INVIO DATI
+        # 2. INVIO DATI SE CAMBIATO
         if content != original_content: 
             update_data = {'content': content}
             up_resp = requests.post(f"{WP_API_URL}/posts/{wp_post_id}", headers=headers, json=update_data)
             
             if up_resp.status_code == 200:
-                print(f"      ✨ WP Command Sent (ID: {wp_post_id}) -> € {new_str_dot}")
+                print(f"      ✨ WordPress Aggiornato (ID: {wp_post_id}) -> € {new_str_dot}")
                 
-                # 3. VERIFICA REALE
-                # Rileggiamo il post per vedere se il DB l'ha preso davvero
+                # Verifica Immediata
                 check_resp = requests.get(f"{WP_API_URL}/posts/{wp_post_id}?context=edit", headers=headers)
                 final_content = check_resp.json()['content']['raw']
-                
-                if str(new_str_dot) in final_content:
-                     print(f"      ✅ VERIFICA OK: Il prezzo nel DB è {new_str_dot}")
+                if new_str_dot in final_content or new_str_comma in final_content:
+                     print(f"      ✅ VERIFICA OK: Prezzo presente nel DB.")
                 else:
-                     print(f"      💀 VERIFICA FALLITA: WordPress ha rifiutato la modifica!")
+                     print(f"      💀 VERIFICA FALLITA.")
             else:
                 print(f"      ❌ Errore API: {up_resp.text}")
         else:
-            print("      ⚠️ Nessuna modifica necessaria (Già aggiornato?).")
+            print("      ⚠️ Nessuna modifica necessaria (Il testo contiene già il nuovo prezzo?)")
 
     except Exception as e:
         print(f"      ❌ Errore critico: {e}")
 
 def run_price_monitor():
-    print(f"🚀 [{datetime.now().strftime('%H:%M:%S')}] MONITORAGGIO (V.ROBUSTA) AVVIATO...")
+    print(f"🚀 [{datetime.now().strftime('%H:%M:%S')}] MONITORAGGIO (V.CARRO ARMATO) AVVIATO...")
     
     while True:
         conn = None
@@ -130,6 +139,7 @@ def run_price_monitor():
                     cursor.execute("INSERT INTO price_history (product_id, price) VALUES (%s, %s)", (p_id, new_price))
                     conn.commit()
                     
+                    # Passiamo il vecchio prezzo per permettere la ricerca "Brute Force"
                     update_wp_post_price(wp_id, old_price, new_price)
                 else:
                     print(f"   ⚖️ {asin}: Stabile (€{old_price})")
