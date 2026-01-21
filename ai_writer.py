@@ -1,6 +1,5 @@
 import os
 import json
-import random
 from openai import OpenAI
 
 # Configurazione Client
@@ -41,20 +40,21 @@ def genera_recensione_seo(product_data):
     ⚠️ REGOLE MANDATORIE:
     1. NON usare MAI markdown (**grassetto** o # Titolo). Usa solo tag HTML.
     2. NON scrivere MAI i voti o il "Voto complessivo" nel testo HTML. I voti devono stare solo nel JSON.
-    3. Scrivi in terza persona plurale ("Abbiamo provato", "Riteniamo").
-    4. Lo stile deve essere di chi ha provato il prodotto, non un comunicato stampa.
-    5. Includi sezioni: Intro, Design, Esperienza d'uso, Conclusioni, Pro e Contro.
-    6. Valuta severamente il rapporto qualità/prezzo considerando il costo di {price}€.
+    3. Parla in TERZA PERSONA PLURALE ("Abbiamo testato", "Riteniamo").
+    4. Sii critico e severo: usa una scala 0-10 reale. Se il prodotto costa molto ({price}€) ma non convince, penalizzalo.
+    5. Includi sezioni: Introduzione, Design e Materiali, Prestazioni, Pro e Contro (lista HTML), Conclusioni.
+    6. Ottimizza per lettura mobile: paragrafi brevi e spaziature corrette.
     
-    JSON: {{
+    JSON RICHIESTO:
+    {{
         "html_content": "...",
         "meta_description": "...",
         "category_id": "Scegli dalla lista [{cat_list}]",
         "sub_scores": [
-            {{ "label": "Qualità Costruttiva", "value": 7.5 }},
+            {{ "label": "Qualità Costruttiva", "value": 7.0 }},
             {{ "label": "Prestazioni", "value": 8.0 }},
-            {{ "label": "Rapporto Prezzo", "value": 6.0 }},
-            {{ "label": "Usabilità", "value": 8.5 }}
+            {{ "label": "Rapporto Prezzo", "value": 5.5 }},
+            {{ "label": "Usabilità", "value": 7.5 }}
         ],
         "verdict_badge": "Consigliato",
         "faqs": []
@@ -64,7 +64,7 @@ def genera_recensione_seo(product_data):
     try:
         response = client.chat.completions.create(
             model="gpt-4o",
-            messages=[{"role": "system", "content": prompt_system}, {"role": "user", "content": f"Titolo: {title}. Features: {features}"}],
+            messages=[{"role": "system", "content": prompt_system}, {"role": "user", "content": f"Titolo: {title}. Dati: {features}"}],
             response_format={"type": "json_object"}
         )
         data = json.loads(response.choices[0].message.content)
@@ -78,5 +78,5 @@ def genera_recensione_seo(product_data):
         data['category_id'] = CATEGORIES_MAP.get(name, 1)
         return data
     except Exception as e:
-        print(f"Errore AI: {e}")
+        print(f"❌ Errore AI: {e}")
         return None
