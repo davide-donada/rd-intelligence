@@ -1,9 +1,12 @@
 import os
 import json
+import random
 from openai import OpenAI
 
+# Configurazione Client
 client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 
+# Mappa Categorie Reale di RecensioneDigitale.it
 CATEGORIES_MAP = {
     'Accessori': 3467, 'Alimentazione': 996, 'Alimenti per tutti': 3476, 
     'Alimenti sportivi': 3475, 'Altri veicoli': 3464, 'App': 179, 'Apple': 801, 
@@ -33,25 +36,25 @@ def genera_recensione_seo(product_data):
     cat_list = ", ".join(CATEGORIES_MAP.keys())
 
     prompt_system = f"""
-    Sei il Capo Redattore di RecensioneDigitale.it. Scrivi in HTML (usa <h2>, <h3>, <p>, <ul>).
-    MAI usare markdown (**grassetto** o # Titolo).
+    Sei il Capo Redattore di RecensioneDigitale.it. Scrivi una recensione professionale e critica in HTML (usa <h2>, <h3>, <p>, <ul>).
     
-    REGOLE CRITICHE:
-    1. Voti 0-10 reali. Sii severo se il prezzo ({price}€) è alto.
-    2. NON scrivere il voto finale o i voti parziali dentro il testo HTML.
-    3. Il testo deve finire con la conclusione discorsiva.
-    
-    Scegli una categoria tra: [{cat_list}].
+    ⚠️ REGOLE MANDATORIE:
+    1. NON usare MAI markdown (**grassetto** o # Titolo). Usa solo tag HTML.
+    2. NON scrivere MAI i voti o il "Voto complessivo" nel testo HTML. I voti devono stare solo nel JSON.
+    3. Scrivi in terza persona plurale ("Abbiamo provato", "Riteniamo").
+    4. Lo stile deve essere di chi ha provato il prodotto, non un comunicato stampa.
+    5. Includi sezioni: Intro, Design, Esperienza d'uso, Conclusioni, Pro e Contro.
+    6. Valuta severamente il rapporto qualità/prezzo considerando il costo di {price}€.
     
     JSON: {{
         "html_content": "...",
         "meta_description": "...",
-        "category_id": "NomeCategoria",
+        "category_id": "Scegli dalla lista [{cat_list}]",
         "sub_scores": [
-            {{ "label": "Qualità Costruttiva", "value": 6.5 }},
+            {{ "label": "Qualità Costruttiva", "value": 7.5 }},
             {{ "label": "Prestazioni", "value": 8.0 }},
-            {{ "label": "Rapporto Qualità/Prezzo", "value": 5.0 }},
-            {{ "label": "Facilità d'uso", "value": 7.5 }}
+            {{ "label": "Rapporto Prezzo", "value": 6.0 }},
+            {{ "label": "Usabilità", "value": 8.5 }}
         ],
         "verdict_badge": "Consigliato",
         "faqs": []
@@ -61,16 +64,16 @@ def genera_recensione_seo(product_data):
     try:
         response = client.chat.completions.create(
             model="gpt-4o",
-            messages=[{"role": "system", "content": prompt_system}, {"role": "user", "content": f"Prodotto: {title}. Dati: {features}"}],
+            messages=[{"role": "system", "content": prompt_system}, {"role": "user", "content": f"Titolo: {title}. Features: {features}"}],
             response_format={"type": "json_object"}
         )
         data = json.loads(response.choices[0].message.content)
         
-        # Calcolo media voti dinamica
+        # Calcolo Media Matematica Reale (0-10)
         voti = [s['value'] for s in data.get('sub_scores', [])]
         data['final_score'] = round(sum(voti)/len(voti), 1) if voti else 6.0
         
-        # Match categoria
+        # Mappatura Categoria
         name = data.get('category_id')
         data['category_id'] = CATEGORIES_MAP.get(name, 1)
         return data
