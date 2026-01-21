@@ -2,10 +2,8 @@ import os
 import json
 from openai import OpenAI
 
-# Configurazione Client
 client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 
-# Mappa Categorie Reale di RecensioneDigitale.it
 CATEGORIES_MAP = {
     'Accessori': 3467, 'Alimentazione': 996, 'Alimenti per tutti': 3476, 
     'Alimenti sportivi': 3475, 'Altri veicoli': 3464, 'App': 179, 'Apple': 801, 
@@ -31,30 +29,28 @@ CATEGORIES_MAP = {
 def genera_recensione_seo(product_data):
     title = product_data.get('title', 'Prodotto')
     price = product_data.get('price', 0)
-    features = product_data.get('features', '')
     cat_list = ", ".join(CATEGORIES_MAP.keys())
 
     prompt_system = f"""
-    Sei il Capo Redattore di RecensioneDigitale.it. Scrivi una recensione professionale e critica in HTML (usa <h2>, <h3>, <p>, <ul>).
+    Sei il Capo Redattore di RecensioneDigitale.it. Scrivi una recensione professionale in HTML.
     
-    ⚠️ REGOLE MANDATORIE:
-    1. NON usare MAI markdown (**grassetto** o # Titolo). Usa solo tag HTML.
-    2. NON scrivere MAI i voti o il "Voto complessivo" nel testo HTML. I voti devono stare solo nel JSON.
-    3. Parla in TERZA PERSONA PLURALE ("Abbiamo testato", "Riteniamo").
-    4. Sii critico e severo: usa una scala 0-10 reale. Se il prodotto costa molto ({price}€) ma non convince, penalizzalo.
-    5. Includi sezioni: Introduzione, Design e Materiali, Prestazioni, Pro e Contro (lista HTML), Conclusioni.
-    6. Ottimizza per lettura mobile: paragrafi brevi e spaziature corrette.
+    REGOLE MANDATORIE:
+    1. HTML PURO: Usa <h2>, <h3>, <p>, <ul>. MAI usare Markdown (** o #).
+    2. TONE: Terza persona plurale ("Abbiamo testato"). Stile onesto e critico.
+    3. NO DOPPIONI: NON scrivere i Pro, i Contro o i Voti nel testo HTML.
+    4. STRUTTURA: Intro, Design, Esperienza d'uso, Conclusioni.
     
     JSON RICHIESTO:
     {{
         "html_content": "...",
         "meta_description": "...",
-        "category_id": "Scegli dalla lista [{cat_list}]",
+        "category_id": "Scegli tra [{cat_list}]",
+        "pros": ["Punto di forza 1", "Punto di forza 2"],
+        "cons": ["Difetto 1", "Difetto 2"],
         "sub_scores": [
-            {{ "label": "Qualità Costruttiva", "value": 7.0 }},
-            {{ "label": "Prestazioni", "value": 8.0 }},
-            {{ "label": "Rapporto Prezzo", "value": 5.5 }},
-            {{ "label": "Usabilità", "value": 7.5 }}
+            {{ "label": "Materiali", "value": 7.0 }},
+            {{ "label": "Performance", "value": 8.5 }},
+            {{ "label": "Prezzo", "value": 5.0 }}
         ],
         "verdict_badge": "Consigliato",
         "faqs": []
@@ -64,18 +60,13 @@ def genera_recensione_seo(product_data):
     try:
         response = client.chat.completions.create(
             model="gpt-4o",
-            messages=[{"role": "system", "content": prompt_system}, {"role": "user", "content": f"Titolo: {title}. Dati: {features}"}],
+            messages=[{"role": "system", "content": prompt_system}, {"role": "user", "content": f"Titolo: {title}"}],
             response_format={"type": "json_object"}
         )
         data = json.loads(response.choices[0].message.content)
-        
-        # Calcolo Media Matematica Reale (0-10)
         voti = [s['value'] for s in data.get('sub_scores', [])]
         data['final_score'] = round(sum(voti)/len(voti), 1) if voti else 6.0
-        
-        # Mappatura Categoria
-        name = data.get('category_id')
-        data['category_id'] = CATEGORIES_MAP.get(name, 1)
+        data['category_id'] = CATEGORIES_MAP.get(data.get('category_id'), 1)
         return data
     except Exception as e:
         print(f"❌ Errore AI: {e}")
