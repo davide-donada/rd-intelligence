@@ -22,11 +22,7 @@ WP_APP_PASSWORD = os.getenv('WP_PASSWORD')
 def get_headers():
     credentials = f"{WP_USER}:{WP_APP_PASSWORD}"
     token = base64.b64encode(credentials.encode())
-    return {
-        'Authorization': f'Basic {token.decode("utf-8")}',
-        'Content-Type': 'application/json',
-        'User-Agent': 'Mozilla/5.0'
-    }
+    return {'Authorization': f'Basic {token.decode("utf-8")}', 'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0'}
 
 def clean_amazon_image_url(url):
     if not url or not isinstance(url, str): return ""
@@ -48,25 +44,89 @@ def upload_image_to_wp(image_url, title):
 
 def generate_pros_cons_html(pros, cons):
     if not pros and not cons: return ""
-    # Font rimosso per usare quello predefinito del sito
-    pros_html = "".join([f"<li style='margin-bottom:8px; list-style:none; padding-left:25px; position:relative;'><span style='position:absolute; left:0; color:#28a745;'>✅</span>{p}</li>" for p in pros])
-    cons_html = "".join([f"<li style='margin-bottom:8px; list-style:none; padding-left:25px; position:relative;'><span style='position:absolute; left:0; color:#dc3545;'>❌</span>{c}</li>" for c in cons])
+    pros_html = "".join([f"<li style='margin-bottom:10px; list-style:none; padding-left:28px; position:relative; line-height:1.5;'><span style='position:absolute; left:0; top:0; color:#10b981; font-weight:bold;'>✓</span>{p}</li>" for p in pros])
+    cons_html = "".join([f"<li style='margin-bottom:10px; list-style:none; padding-left:28px; position:relative; line-height:1.5;'><span style='position:absolute; left:0; top:0; color:#ef4444; font-weight:bold;'>✕</span>{c}</li>" for c in cons])
+    
     return f"""
-    <div style="display: flex; flex-wrap: wrap; gap: 20px; margin: 30px 0;">
-        <div style="flex: 1; min-width: 280px; background: #f0fff4; border: 1px solid #c6f6d5; border-radius: 12px; padding: 20px;">
-            <h3 style="margin-top: 0; color: #22543d; font-size: 1.2rem;">✅ Pro</h3>
-            <ul style="margin: 0; padding: 0;">{pros_html}</ul>
+    <div style="display: flex; flex-wrap: wrap; gap: 25px; margin: 40px 0;">
+        <div style="flex: 1; min-width: 300px; background: #ffffff; border-top: 4px solid #10b981; border-radius: 8px; padding: 25px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05), 0 2px 4px -1px rgba(0,0,0,0.03);">
+            <h3 style="margin-top: 0; color: #065f46; font-size: 1.3rem; border-bottom: 1px solid #ecfdf5; padding-bottom: 10px; margin-bottom: 15px;">PRO</h3>
+            <ul style="margin: 0; padding: 0; color: #374151;">{pros_html}</ul>
         </div>
-        <div style="flex: 1; min-width: 280px; background: #fff5f5; border: 1px solid #fed7d7; border-radius: 12px; padding: 20px;">
-            <h3 style="margin-top: 0; color: #822727; font-size: 1.2rem;">❌ Contro</h3>
-            <ul style="margin: 0; padding: 0;">{cons_html}</ul>
+        <div style="flex: 1; min-width: 300px; background: #ffffff; border-top: 4px solid #ef4444; border-radius: 8px; padding: 25px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05), 0 2px 4px -1px rgba(0,0,0,0.03);">
+            <h3 style="margin-top: 0; color: #991b1b; font-size: 1.3rem; border-bottom: 1px solid #fef2f2; padding-bottom: 10px; margin-bottom: 15px;">CONTRO</h3>
+            <ul style="margin: 0; padding: 0; color: #374151;">{cons_html}</ul>
         </div>
     </div>"""
 
 def generate_scorecard_html(score, badge, sub_scores):
-    color = "#28a745" if score >= 7.5 else "#ffc107" if score >= 6 else "#dc3545"
-    bars = "".join([f"<div style='margin-bottom:10px;'><div style='display:flex; justify-content:space-between; font-size:0.85rem; font-weight:600;'><span>{s['label']}</span><span>{s['value']}/10</span></div><div style='background:#eee; border-radius:10px; height:8px;'><div style='width:{int(s['value']*10)}%; height:100%; background:{color}; border-radius:10px;'></div></div></div>" for s in sub_scores])
-    return f"<div style='background:#f9f9f9; border:1px solid #eee; border-radius:15px; padding:25px; margin:30px 0;'><div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;'><h3 style='margin:0;'>Verdetto Finale</h3><div style='background:{color}; color:white; width:50px; height:50px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:bold;'>{score}</div></div>{bars}</div>"
+    # Definizione colori avanzati (Gradienti)
+    if score >= 7.5:
+        primary_color = "#10b981" # Emerald Green
+        gradient = "linear-gradient(135deg, #10b981 0%, #34d399 100%)"
+        shadow_color = "rgba(16, 185, 129, 0.4)"
+    elif score >= 6:
+        primary_color = "#f59e0b" # Amber
+        gradient = "linear-gradient(135deg, #f59e0b 0%, #fbbf24 100%)"
+        shadow_color = "rgba(245, 158, 11, 0.4)"
+    else:
+        primary_color = "#ef4444" # Red
+        gradient = "linear-gradient(135deg, #ef4444 0%, #f87171 100%)"
+        shadow_color = "rgba(239, 68, 68, 0.4)"
+
+    bars_html = ""
+    for item in sub_scores:
+        val = item.get('value', 8)
+        percent = int(val * 10)
+        bars_html += f"""
+        <div style="margin-bottom: 15px;">
+            <div style="display:flex; justify-content:space-between; font-size:0.9rem; font-weight:700; margin-bottom:6px; color:#4b5563;">
+                <span>{item.get('label')}</span>
+                <span>{val}</span>
+            </div>
+            <div style="background:#f3f4f6; border-radius:99px; height:10px; width:100%; overflow:hidden; box-shadow: inset 0 1px 2px rgba(0,0,0,0.05);">
+                <div style="width:{percent}%; height:100%; background:{gradient}; border-radius:99px; transition: width 1.5s ease-in-out;"></div>
+            </div>
+        </div>"""
+
+    # Layout "Card" moderno con Flexbox
+    return f"""
+    <div style='background: #ffffff; border-radius: 16px; padding: 30px; margin: 40px 0; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.01); border: 1px solid #f3f4f6;'>
+        <div style='display: flex; flex-wrap: wrap; align-items: center; gap: 30px;'>
+            <div style='flex: 0 0 auto; text-align: center; min-width: 120px; margin: 0 auto;'>
+                <div style='
+                    width: 100px; 
+                    height: 100px; 
+                    border-radius: 50%; 
+                    background: {gradient}; 
+                    display: flex; 
+                    align-items: center; 
+                    justify-content: center; 
+                    color: white; 
+                    font-size: 2.5rem; 
+                    font-weight: 800; 
+                    box-shadow: 0 10px 15px -3px {shadow_color};
+                    margin: 0 auto 15px auto;
+                '>{score}</div>
+                <div style='
+                    background: {primary_color}1a; 
+                    color: {primary_color}; 
+                    display: inline-block; 
+                    padding: 4px 12px; 
+                    border-radius: 20px; 
+                    font-weight: 700; 
+                    font-size: 0.85rem; 
+                    text-transform: uppercase; 
+                    letter-spacing: 0.5px;
+                '>{badge}</div>
+            </div>
+            
+            <div style='flex: 1; min-width: 250px;'>
+                <h3 style='margin: 0 0 20px 0; font-size: 1.5rem; color: #111827; border-bottom: 2px solid #f3f4f6; padding-bottom: 10px;'>Verdetto Finale</h3>
+                {bars_html}
+            </div>
+        </div>
+    </div>"""
 
 def analyze_price_history(product_id, current_price):
     try:
@@ -89,14 +149,23 @@ def format_article_html(product, local_image_url, ai_data):
     
     p_verdict, p_color, p_desc = analyze_price_history(p_id, price)
     price_widget = f"<div style='border-left:4px solid {p_color}; padding-left:15px; margin:20px 0;'><strong>{p_verdict}</strong><br><small>{p_desc}</small></div>"
-
-    header = f"<div style='text-align:center;'><a href='{aff_link}' target='_blank'><img src='{local_image_url}' style='max-height:350px;'></a><h2>{title}</h2><p style='font-size:1.5rem; color:#B12704;'><strong>€{price}</strong></p>{price_widget}<a href='{aff_link}' target='_blank' style='background:#ff9900; color:white; padding:12px 25px; text-decoration:none; border-radius:5px; font-weight:bold;'>Vedi Offerta su Amazon</a></div>"
+    
+    today_str = datetime.now().strftime('%d/%m/%Y')
+    header = f"""
+    <div style='text-align:center;'>
+        <a href='{aff_link}' target='_blank'><img src='{local_image_url}' style='max-height:400px; width:auto; border-radius:8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);'></a>
+        <h2 style='margin-top:20px;'>{title}</h2>
+        <p style='font-size:1.8rem; color:#B12704; margin-bottom:5px;'><strong>€ {price}</strong></p>
+        {price_widget}
+        <a href='{aff_link}' target='_blank' style='background:#ff9900; color:white; padding:15px 30px; text-decoration:none; border-radius:8px; font-weight:bold; font-size:1.1rem; display:inline-block; margin-top:10px; box-shadow: 0 2px 5px rgba(0,0,0,0.2); transition: all 0.2s ease;'>Vedi Offerta su Amazon</a>
+        <p style='font-size:0.75rem; color:#888; margin-top:8px;'>Prezzo aggiornato al: {today_str}</p>
+    </div>
+    """
     
     body = ai_data.get('html_content', '')
     pros_cons = generate_pros_cons_html(ai_data.get('pros', []), ai_data.get('cons', []))
     scorecard = generate_scorecard_html(ai_data.get('final_score', 8.0), ai_data.get('verdict_badge', 'Consigliato'), ai_data.get('sub_scores', []))
-    
-    video = f"<div style='margin-top:30px;'><iframe width='100%' height='400' src='https://www.youtube.com/embed/{ai_data.get('video_id', '')}' frameborder='0' allowfullscreen></iframe></div>" if ai_data.get('video_id') else ""
+    video = f"<div style='margin-top:30px; border-radius:12px; overflow:hidden; box-shadow:0 10px 15px -3px rgba(0,0,0,0.1);'><iframe width='100%' height='450' src='https://www.youtube.com/embed/{ai_data.get('video_id', '')}' frameborder='0' allowfullscreen></iframe></div>" if ai_data.get('video_id') else ""
     
     return header + body + pros_cons + scorecard + video
 
@@ -110,7 +179,6 @@ def run_publisher():
         for p in cursor.fetchall():
             ai_data = json.loads(p[5])
             media_id = upload_image_to_wp(p[4], p[2])
-            
             local_url = p[4]
             if media_id:
                 try:
@@ -124,6 +192,9 @@ def run_publisher():
                 "@context": "https://schema.org/",
                 "@type": "Product",
                 "name": p[2],
+                "image": local_url,
+                "description": p[7],
+                "offers": {"@type": "Offer", "price": str(p[3]), "priceCurrency": "EUR", "availability": "https://schema.org/InStock"},
                 "review": {
                     "@type": "Review",
                     "reviewRating": {"@type": "Rating", "ratingValue": str(ai_data.get('final_score', 8.0)), "bestRating": "10", "worstRating": "0"},
@@ -143,11 +214,10 @@ def run_publisher():
             resp = requests.post(f"{WP_API_URL}/posts", headers=get_headers(), json=post_data)
             if resp.status_code == 201:
                 wp_post_id = resp.json().get('id')
-                # AGGIORNAMENTO STORICO E COLLEGAMENTO WP_POST_ID
                 cursor.execute("UPDATE products SET status = 'published', wp_post_id = %s WHERE id = %s", (wp_post_id, p[0]))
                 cursor.execute("INSERT INTO price_history (product_id, price) VALUES (%s, %s)", (p[0], p[3]))
                 conn.commit()
-                print(f"✅ Pubblicato e Storico Avviato: {p[1]} (WP ID: {wp_post_id})")
+                print(f"✅ Pubblicato: {p[1]} (WP ID: {wp_post_id})")
     except Exception as e:
         print(f"❌ Errore: {e}")
     finally:
