@@ -33,6 +33,7 @@ def get_headers():
 def clean_amazon_image_url(url):
     if not url or not isinstance(url, str): return ""
     try:
+        # Prende l'immagine originale ad alta risoluzione
         clean_url = re.sub(r'\._AC_.*_\.', '.', url)
         return clean_url
     except:
@@ -66,7 +67,6 @@ def upload_image_to_wp(image_url, title):
         print(f"     ⚠️ Errore upload: {e}")
     return None
 
-# --- ANALISI PREZZO (LOGICA KEEPA) ---
 def analyze_price_history(product_id, current_price):
     try:
         conn = mysql.connector.connect(**DB_CONFIG)
@@ -75,12 +75,11 @@ def analyze_price_history(product_id, current_price):
         rows = cursor.fetchall()
         conn.close()
 
-        if not rows:
-            return "⚖️ Prezzo Standard", "#6c757d", "Analisi in corso..."
-
-        prices = [float(r[0]) for r in rows]
-        prices.append(float(current_price))
+        prices = [float(r[0]) for r in rows] if rows else [float(current_price)]
         
+        if len(prices) < 2:
+            return "⚖️ PREZZO STANDARD", "#6c757d", "Analisi di mercato avviata."
+
         avg_price = sum(prices) / len(prices)
         min_price = min(prices)
         current = float(current_price)
@@ -88,13 +87,13 @@ def analyze_price_history(product_id, current_price):
         if current <= min_price:
             return "🔥 OTTIMO PREZZO", "#28a745", "Minimo storico rilevato!"
         elif current < avg_price:
-            return "✅ BUON PREZZO", "#17a2b8", "Sotto la media."
+            return "✅ BUON PREZZO", "#17a2b8", "Sotto la media recente."
         elif current > (avg_price * 1.1):
-            return "⚠️ PREZZO ALTO", "#dc3545", "Consigliamo di aspettare."
+            return "⚠️ PREZZO ALTO", "#dc3545", "Consigliamo di attendere un'offerta."
         else:
-            return "⚖️ PREZZO MEDIO", "#ffc107", "In linea con il mercato."
+            return "⚖️ PREZZO MEDIO", "#ffc107", "In linea con il prezzo di mercato."
     except:
-        return "⚖️ Prezzo Standard", "#6c757d", ""
+        return "⚖️ PREZZO STANDARD", "#6c757d", ""
 
 def generate_scorecard_html(score, badge, sub_scores):
     badge_color = "#28a745"
@@ -140,28 +139,22 @@ def format_article_html(product, local_image_url=None, ai_data=None):
     title = product[2]
     price = product[3]
     
-    if local_image_url and isinstance(local_image_url, str) and local_image_url.startswith('http'):
-        final_image = local_image_url
-    else:
-        final_image = clean_amazon_image_url(product[5])
+    final_image = local_image_url if local_image_url else clean_amazon_image_url(product[5])
     
-    html_body = ai_data.get('html_content', 'Recensione in lavorazione...')
+    html_body = ai_data.get('html_content', 'Contenuto in generazione...')
     score = ai_data.get('final_score', 8.0)
     badge = ai_data.get('verdict_badge', 'Consigliato')
     sub_scores = ai_data.get('sub_scores', [])
     faqs = ai_data.get('faqs', [])
-    video_id = ai_data.get('video_id', None) # Se è nel JSON lo usiamo
+    video_id = ai_data.get('video_id', None)
     aff_link = f"https://www.amazon.it/dp/{asin}?tag=recensionedigitale-21"
 
-    # Analisi Prezzo
     p_verdict, p_color, p_desc = analyze_price_history(product_id, price)
     price_widget = f"""<div style="background:{p_color}1a; border-left: 5px solid {p_color}; padding: 10px 15px; margin: 10px 0; border-radius: 4px;"><div style="font-weight: bold; color: {p_color}; text-transform: uppercase; font-size: 0.85rem;">{p_verdict}</div><div style="font-size: 0.8rem; color: #555;">{p_desc}</div></div>"""
 
     header_html = f"<div style='background-color: #fff; border: 1px solid #e1e1e1; padding: 20px; margin-bottom: 30px; border-radius: 8px; display: flex; flex-wrap: wrap; gap: 20px; align-items: center;'><div style='flex: 1; text-align: center; min-width: 200px;'><a href='{aff_link}' rel='nofollow sponsored' target='_blank'><img src='{final_image}' alt='{title}' style='max-height: 250px; width: auto; object-fit: contain;'></a></div><div style='flex: 1.5; min-width: 250px;'><h2 style='margin-top: 0; font-size: 1.4rem;'>{title}</h2><div style='font-size: 2rem; color: #B12704; font-weight: bold; margin: 10px 0;'>€ {price}</div>{price_widget}<a href='{aff_link}' rel='nofollow sponsored' target='_blank' style='background-color: #ff9900; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block; margin-top: 10px;'>👉 Vedi Offerta su Amazon</a><p style='font-size: 0.8rem; color: #666; margin-top: 5px;'>Prezzo aggiornato al: {datetime.now().strftime('%d/%m/%Y')}</p></div></div>"
 
-    video_html = ""
-    if video_id:
-        video_html = f"<div style='margin: 40px 0;'><h3>🎥 Video Recensione Selezionata</h3><div style='position: relative; padding-bottom: 56.25%; height: 0; overflow: hidden; max-width: 100%; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);'><iframe src='https://www.youtube.com/embed/{video_id}' style='position: absolute; top: 0; left: 0; width: 100%; height: 100%;' frameborder='0' allowfullscreen></iframe></div></div>"
+    video_html = f"<div style='margin: 40px 0;'><h3>🎥 Video Recensione Selezionata</h3><div style='position: relative; padding-bottom: 56.25%; height: 0; overflow: hidden; max-width: 100%; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);'><iframe src='https://www.youtube.com/embed/{video_id}' style='position: absolute; top: 0; left: 0; width: 100%; height: 100%;' frameborder='0' allowfullscreen></iframe></div></div>" if video_id else ""
 
     scorecard_html = generate_scorecard_html(score, badge, sub_scores)
     faq_html, faq_schema = generate_faq_html(faqs)
@@ -170,35 +163,26 @@ def format_article_html(product, local_image_url=None, ai_data=None):
     return header_html + html_body + scorecard_html + video_html + faq_html + footer_html + faq_schema
 
 def run_publisher():
-    print("🔌 [WP] Controllo bozze...")
+    print("🔌 [WP] Controllo prodotti in draft...")
     conn = None
     try:
         conn = mysql.connector.connect(**DB_CONFIG)
         cursor = conn.cursor()
-        # Selezioniamo anche CATEGORY_ID e VIDEO_ID (se l'hai salvato in JSON ai_sentiment)
         cursor.execute("SELECT id, asin, title, current_price, image_url, ai_sentiment, category_id, meta_desc FROM products WHERE status = 'draft'")
         products = cursor.fetchall()
         
         for p in products:
-            try:
-                ai_data = json.loads(p[5]) 
-            except:
-                ai_data = {"html_content": p[5]}
+            p_id, current_price = p[0], p[3]
+            
+            # 1. SALVA PREZZO INIZIALE NELLO STORICO
+            cursor.execute("INSERT INTO price_history (product_id, price) VALUES (%s, %s)", (p_id, current_price))
+            conn.commit()
 
+            ai_data = json.loads(p[5]) if isinstance(p[5], str) else p[5]
             print(f"   > Pubblicazione: {p[2][:30]}...")
             
-            # --- FIX CATEGORIA ---
-            cat_id = p[6] # Colonna category_id dal DB
-            if cat_id is None: 
-                cat_id = 1
-            
-            # Forziamo a intero per WordPress
-            try:
-                cat_id = int(cat_id)
-            except:
-                cat_id = 1
-            
-            print(f"     📂 Categoria per WP: {cat_id}")
+            # Categoria sicura
+            cat_id = int(p[6]) if p[6] else 1
 
             hd_url = clean_amazon_image_url(p[4])
             media_id = upload_image_to_wp(hd_url, p[2])
@@ -212,16 +196,16 @@ def run_publisher():
 
             post_content = format_article_html(p, local_url, ai_data)
             
+            # Schema.org Product
             final_score = ai_data.get('final_score', 8.0)
             schema_p = {"@context": "https://schema.org/", "@type": "Product", "name": p[2], "review": {"@type": "Review", "reviewRating": {"@type": "Rating", "ratingValue": str(final_score)}, "author": {"@type": "Person", "name": "Redazione RD"}}}
             post_content += f'\n<script type="application/ld+json">{json.dumps(schema_p)}</script>'
 
-            # PREPARAZIONE DATI POST
             post_data = {
                 'title': f"Recensione: {p[2]}",
                 'content': post_content,
                 'status': 'draft', 
-                'categories': [cat_id], # <--- QUI ORA È SICURO UN NUMERO
+                'categories': [cat_id],
                 'featured_media': media_id if media_id else 0,
                 'excerpt': p[7]
             }
@@ -229,11 +213,11 @@ def run_publisher():
 
             resp = requests.post(f"{WP_API_URL}/posts", headers=get_headers(), json=post_data)
             if resp.status_code == 201:
-                cursor.execute("UPDATE products SET status = 'published' WHERE id = %s", (p[0],))
-                # INIZIALIZZAZIONE STORICO
-                cursor.execute("INSERT INTO price_history (product_id, price) VALUES (%s, %s)", (p[0], p[3]))
+                wp_id = resp.json().get('id')
+                # SALVA ID E STATO
+                cursor.execute("UPDATE products SET status = 'published', wp_post_id = %s WHERE id = %s", (wp_id, p_id))
                 conn.commit()
-                print("     ✅ Pubblicato e Iniziato Tracking!")
+                print(f"     ✅ Pubblicato (WP ID: {wp_id})!")
             else:
                 print(f"     ❌ Errore WP: {resp.text}")
 
