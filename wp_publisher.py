@@ -22,7 +22,11 @@ WP_APP_PASSWORD = os.getenv('WP_PASSWORD')
 def get_headers():
     credentials = f"{WP_USER}:{WP_APP_PASSWORD}"
     token = base64.b64encode(credentials.encode())
-    return {'Authorization': f'Basic {token.decode("utf-8")}', 'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0'}
+    return {
+        'Authorization': f'Basic {token.decode("utf-8")}',
+        'Content-Type': 'application/json',
+        'User-Agent': 'Mozilla/5.0'
+    }
 
 def clean_amazon_image_url(url):
     if not url or not isinstance(url, str): return ""
@@ -44,10 +48,8 @@ def upload_image_to_wp(image_url, title):
 
 def generate_pros_cons_html(pros, cons):
     if not pros and not cons: return ""
-    
     pros_html = "".join([f"<li style='margin-bottom:8px; list-style:none; padding-left:25px; position:relative;'><span style='position:absolute; left:0; color:#28a745;'>✅</span>{p}</li>" for p in pros])
     cons_html = "".join([f"<li style='margin-bottom:8px; list-style:none; padding-left:25px; position:relative;'><span style='position:absolute; left:0; color:#dc3545;'>❌</span>{c}</li>" for c in cons])
-    
     return f"""
     <div style="display: flex; flex-wrap: wrap; gap: 20px; margin: 30px 0; font-family: sans-serif;">
         <div style="flex: 1; min-width: 280px; background: #f0fff4; border: 1px solid #c6f6d5; border-radius: 12px; padding: 20px;">
@@ -68,15 +70,11 @@ def generate_scorecard_html(score, badge, sub_scores):
 def format_article_html(product, local_image_url, ai_data):
     asin, title, price = product[1], product[2], product[3]
     aff_link = f"https://www.amazon.it/dp/{asin}?tag=recensionedigitale-21"
-    
     header = f"<div style='text-align:center;'><a href='{aff_link}' target='_blank'><img src='{local_image_url}' style='max-height:350px;'></a><h2>{title}</h2><p style='font-size:1.5rem; color:#B12704;'><strong>€{price}</strong></p><a href='{aff_link}' target='_blank' style='background:#ff9900; color:white; padding:12px 25px; text-decoration:none; border-radius:5px; font-weight:bold;'>Vedi Offerta su Amazon</a></div>"
-    
     body = ai_data.get('html_content', '')
     pros_cons = generate_pros_cons_html(ai_data.get('pros', []), ai_data.get('cons', []))
     scorecard = generate_scorecard_html(ai_data.get('final_score', 8.0), ai_data.get('verdict_badge', 'Consigliato'), ai_data.get('sub_scores', []))
-    
     video = f"<div style='margin-top:30px;'><iframe width='100%' height='400' src='https://www.youtube.com/embed/{ai_data.get('video_id', '')}' frameborder='0' allowfullscreen></iframe></div>" if ai_data.get('video_id') else ""
-    
     return header + body + pros_cons + scorecard + video
 
 def run_publisher():
@@ -89,17 +87,51 @@ def run_publisher():
         for p in cursor.fetchall():
             ai_data = json.loads(p[5])
             media_id = upload_image_to_wp(p[4], p[2])
-            local_url = requests.get(f"{WP_API_URL}/media/{media_id}", headers=get_headers()).json().get('source_url') if media_id else p[4]
+            
+            # Gestione recupero URL locale dell'immagine
+            local_url = p[4]
+            if media_id:
+                try:
+                    resp_media = requests.get(f"{WP_API_URL}/media/{media_id}", headers=get_headers())
+                    local_url = resp_media.json().get('source_url', p[4])
+                except:
+                    pass
             
             full_html = format_article_html(p, local_url, ai_data)
             
-            post_data = {'title': f"Recensione: {p[2]}", 'content': full_html, 'status': 'draft', 'categories': [int(p[6]) if p[6] else 1], 'featured_media': media_id, 'excerpt': p[7]}
+            # Aggiunta Schema.org per le stelle
+            schema_p = {
+                "@context": "https://schema.org/",
+                "@type": "Product",
+                "name": p[2],
+                "review": {
+                    "@type": "Review",
+                    "reviewRating": {"@type": "Rating", "ratingValue": str(ai_data.get('final_score', 8.0)), "bestRating": "10", "worstRating": "0"},
+                    "author": {"@type": "Person", "name": "Redazione RD"}
+                }
+            }
+            full_html += f'\n<script type="application/ld+json">{json.dumps(schema_p)}</script>'
+
+            post_data = {
+                'title': f"Recensione: {p[2]}",
+                'content': full_html,
+                'status': 'draft',
+                'categories': [int(p[6]) if p[6] else 1],
+                'featured_media': media_id,
+                'excerpt': p[7]
+            }
             resp = requests.post(f"{WP_API_URL}/posts", headers=get_headers(), json=post_data)
             if resp.status_code == 201:
                 cursor.execute("UPDATE products SET status = 'published', wp_post_id = %s WHERE id = %s", (resp.json().get('id'), p[0]))
+                # Salva il primo punto nello storico
+                cursor.execute("INSERT INTO price_history (product_id, price) VALUES (%s, %s)", (p[0], p[3]))
                 conn.commit()
                 print(f"✅ Pubblicato: {p[1]}")
-    except Exception as e: print(f"❌ Errore: {e}")
-    finally: if conn: conn.close()
+    except Exception as e:
+        print(f"❌ Errore: {e}")
+    finally:
+        if conn:
+            conn.close()
 
-if __name__ == "__main__": run_publisher()
+if __name__ == "__main__":
+    run_publisher()
