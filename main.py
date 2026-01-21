@@ -6,13 +6,12 @@ from datetime import datetime
 
 # --- IMPORT MODULI ---
 try:
-    import amazon_hunter   # Scraper Amazon
-    import youtube_hunter  # Cacciatore Video
-    import ai_writer       # Scrittore AI
-    import wp_publisher    # Pubblicatore WordPress
+    import amazon_hunter   
+    import youtube_hunter  
+    import ai_writer       
+    import wp_publisher    
 except ImportError as e:
     print(f"❌ ERRORE IMPORT: {e}")
-    print("Verifica che i file: amazon_hunter.py, youtube_hunter.py, ai_writer.py, wp_publisher.py siano presenti.")
     exit()
 
 # --- CONFIGURAZIONE DB ---
@@ -28,7 +27,7 @@ def get_db_connection():
     return mysql.connector.connect(**DB_CONFIG)
 
 def main_process_loop():
-    print("🚀 SISTEMA (Full + YouTube Player) AVVIATO...")
+    print("🚀 SISTEMA DI PUBBLICAZIONE RD AVVIATO...")
     
     while True:
         conn = None
@@ -36,71 +35,70 @@ def main_process_loop():
             conn = get_db_connection()
             cursor = conn.cursor()
 
-            # 1. CERCA PRODOTTO IN CODA
+            # 1. CERCA PRODOTTO IN CODA (Pending)
+            # Abbiamo verificato che la colonna 'features' non è presente, 
+            # quindi usiamo solo le colonne certe.
             query = "SELECT id, asin FROM products WHERE status = 'pending' LIMIT 1"
             cursor.execute(query)
             product = cursor.fetchone()
 
             if not product:
-                print("💤 Coda vuota...", end='\r')
+                print("💤 In attesa di nuovi ASIN nella coda...", end='\r')
                 time.sleep(60)
                 continue
 
             p_id, asin = product
-            print(f"\n⚙️  LAVORO SU: {asin}...")
+            print(f"\n⚙️  ELABORAZIONE ASIN: {asin}")
 
-            # 2. BLOCCA (Processing)
+            # 2. BLOCCA IL PRODOTTO (Processing)
             cursor.execute("UPDATE products SET status = 'processing' WHERE id = %s", (p_id,))
             conn.commit()
 
             # --- FASE 1: SCRAPING AMAZON ---
+            # Recuperiamo dati puliti e immagini in HD
             product_data = amazon_hunter.get_amazon_data(asin) 
 
-            if not product_data or not product_data.get('title') or product_data.get('title') == "Titolo non trovato":
-                print(f"   ❌ Scraping Amazon fallito.")
+            if not product_data or not product_data.get('title'):
+                print(f"   ❌ Scraping Amazon fallito per {asin}.")
                 cursor.execute("UPDATE products SET status = 'failed' WHERE id = %s", (p_id,))
                 conn.commit()
                 continue
             
-            # --- FASE 1.5: CACCIA SU YOUTUBE (Solo Video ID) ---
-            # Cerchiamo il video per arricchire la recensione, ma NON tocchiamo l'immagine.
-            print(f"   🎥 Cerco video per: {product_data['title'][:30]}...")
+            # --- FASE 2: RICERCA VIDEO YOUTUBE ---
+            # Cerchiamo una video recensione reale per arricchire il post
+            print(f"   🎥 Ricerca video per: {product_data['title'][:40]}...")
             video_id = youtube_hunter.find_video_review(product_data['title'])
             
-            # AGGIORNAMENTO DATI BASE NEL DB
-            # Salviamo l'immagine di AMAZON ('image') nel campo 'image_url' del DB
+            # Aggiorniamo i dati base nel database
             sql_update = """
                 UPDATE products 
                 SET title=%s, current_price=%s, image_url=%s
                 WHERE id=%s
             """
-            vals = (
+            cursor.execute(sql_update, (
                 product_data.get('title'), 
                 product_data.get('price', 0), 
-                product_data.get('image', ''), # <--- Qui usiamo l'immagine Amazon!
+                product_data.get('image', ''),
                 p_id
-            )
-            cursor.execute(sql_update, vals)
+            ))
             conn.commit()
 
-            # --- FASE 2: INTELLIGENZA ARTIFICIALE ---
+            # --- FASE 3: GENERAZIONE AI (Ottica SEO) ---
+            # Scrittura in terza persona plurale, senza voti nel testo
             ai_result = ai_writer.genera_recensione_seo(product_data)
 
-            if not ai_result or ai_result.get('html_content') == "<p>Errore.</p>":
-                print(f"   ❌ Errore AI.")
+            if not ai_result:
+                print(f"   ❌ Errore durante la generazione del testo AI.")
                 cursor.execute("UPDATE products SET status = 'failed' WHERE id = %s", (p_id,))
                 conn.commit()
                 continue
             
-            # --- INIEZIONE VIDEO ID ---
-            # Se abbiamo trovato un video, lo passiamo nel pacchetto JSON.
-            # Il wp_publisher userà questo ID per creare l'iframe YouTube.
+            # Integriamo il Video ID nel pacchetto dati per il publisher
             if video_id:
                 ai_result['video_id'] = video_id
-                print(f"   ✅ Video integrato (Player pronto).")
 
-            # Salvataggio AI (Draft)
-            cat_id = ai_result.get('category_id', 9)
+            # --- FASE 4: SALVATAGGIO BOZZA (Draft) ---
+            cat_id = ai_result.get('category_id', 1)
             meta_desc = ai_result.get('meta_description', '')
             ai_json = json.dumps(ai_result)
 
@@ -110,19 +108,18 @@ def main_process_loop():
                 WHERE id = %s
             """, (ai_json, cat_id, meta_desc, p_id))
             conn.commit()
-            print(f"   📝 Bozza salvata.")
+            print(f"   📝 Bozza salvata con successo nel DB.")
 
-            # --- FASE 3: PUBBLICAZIONE ---
-            # Il publisher leggerà 'image_url' (che è Amazon) per la copertina
-            # e 'video_id' (dal JSON) per il player.
-            print(f"   📮 Pubblicazione...")
+            # --- FASE 5: PUBBLICAZIONE SU WORDPRESS ---
+            # Il publisher caricherà l'immagine HD e creerà i box grafici
+            print(f"   📮 Invio a WordPress in corso...")
             wp_publisher.run_publisher()
             
-            print(f"   ✅ COMPLETATO: {asin}.\n")
-            time.sleep(5)
+            print(f"   ✅ CICLO COMPLETATO: {asin}\n")
+            time.sleep(10)
 
         except Exception as e:
-            print(f"❌ CRITICAL ERROR: {e}")
+            print(f"❌ ERRORE CRITICO NEL LOOP: {e}")
             time.sleep(30)
         finally:
             if conn: conn.close()
