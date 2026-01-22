@@ -55,7 +55,6 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label):
         new_str = f"{new_price:.2f}"
         diff = new_price - float(old_price)
         
-        # 1. Definizione Testo Dinamico
         if deal_label:
             status_text = deal_label
         elif diff < -0.01:
@@ -65,55 +64,42 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label):
         else:
             status_text = "⚖️ Prezzo Stabile"
 
-        # Nuova struttura box con classe per puntamento preciso
         label_html = f'''\n<div style="background: #6c757d1a; border-left: 5px solid #6c757d; padding: 10px 15px; margin: 10px 0; border-radius: 4px;">
 <div style="font-weight: bold; color: #6c757d; text-transform: uppercase; font-size: 0.85rem;">Stato Offerta</div>
 <div class="rd-status-val" style="font-size: 0.8rem; color: #555;">{status_text}</div>
 </div>'''
 
-        # --- 2. AGGIORNAMENTO PREZZO ---
         price_pattern = r'(<(p|div)[^>]*(?:color:\s?#b12704|rd-price-box)[^>]*>)(.*?)(</\2>)'
-        content = re.sub(price_pattern, f'\\g<1>€ {new_str}\\g<4>', content, flags=re.IGNORECASE)
-
-        # --- 3. AGGIORNAMENTO O INIEZIONE ETICHETTA ---
-        # Cerchiamo prima la classe specifica per evitare doppioni
         class_pattern = r'(class="rd-status-val"[^>]*>)(.*?)(</div>)'
-        # Cerchiamo l'intestazione per sistemare i post corrotti (se l'intestazione è diventata un "Ribasso")
         header_fix_pattern = r'(uppercase; font-size: 0.85rem;">)(.*?)(</div>)'
-        # Cerchiamo i vecchi small/div isolati
         old_label_pattern = r'(<(small|div)[^>]*>)(Analisi in corso\.\.\.|Monitoraggio.*?|⚖️.*?|📉.*?|📈.*?|⚡.*?|🖤.*?|🏷️.*?)(</\2>)'
 
+        # Aggiornamento Prezzo
+        content = re.sub(price_pattern, f'\\g<1>€ {new_str}\\g<4>', content, flags=re.IGNORECASE)
+
+        # Aggiornamento o Iniezione Etichetta
         if 'class="rd-status-val"' in content:
-            # Caso perfetto: aggiorniamo solo il valore
             content = re.sub(class_pattern, f'\\g<1>{status_text}\\g<3>', content, flags=re.IGNORECASE)
         elif "Stato Offerta" in content or "uppercase" in content:
-            # Caso corrotto o vecchio box: ripristiniamo l'intestazione e aggiorniamo il valore
             content = re.sub(header_fix_pattern, f'\\g<1>Stato Offerta\\g<3>', content, count=1, flags=re.IGNORECASE)
             content = re.sub(old_label_pattern, f'\\g<1>{status_text}\\g<4>', content, count=1, flags=re.IGNORECASE)
         else:
-            # Se non c'è nulla, iniettiamo il box nuovo
-            print(f"      🏷️ Iniezione Widget su ID {wp_post_id}")
             content = re.sub(price_pattern, f'\\g<1>€ {new_str}\\g<4>{label_html}', content, flags=re.IGNORECASE)
 
-        # --- 4. DATA E JSON ---
+        # Data e JSON
         today = datetime.now().strftime('%d/%m/%Y')
         content = re.sub(r'(Prezzo aggiornato al:.*?>)(.*?)(</span>|</p>)', f'\\g<1>{today}\\g<3>', content, flags=re.IGNORECASE)
-        
-        json_fix_pattern = r'("offers":\s*\{"@type":\s*"Offer",\s*)(.*?)(,\s*"priceCurrency")'
-        content = re.sub(json_fix_pattern, f'\\g<1>"price": "{new_str}"\\g<3>', content)
-        content = re.sub(r'("price":\s?")([\d\.]+)(",)', f'\\g<1>{new_str}\\g<3>', content)
+        content = re.sub(r'("price":\s?")([\d\.]+)(",)', f'\\1{new_str}\\3', content)
 
-        # --- 5. INVIO ---
         if content != original_content: 
-            up_resp = requests.post(f"{WP_API_URL}/posts/{wp_post_id}", headers=headers, json={'content': content})
-            if up_resp.status_code == 200:
-                print(f"      ✨ WP Aggiornato (ID: {wp_post_id}) -> € {new_str} | {status_text}")
+            requests.post(f"{WP_API_URL}/posts/{wp_post_id}", headers=headers, json={'content': content})
+            print(f"      ✨ WP Aggiornato (ID: {wp_post_id}) -> € {new_str} | {status_text}")
 
     except Exception as e:
         print(f"      ❌ Errore critico: {e}")
 
 def run_price_monitor():
-    print(f"🚀 [{datetime.now().strftime('%H:%M:%S')}] MONITORAGGIO v10.6 (CLEAN UI) AVVIATO...")
+    print(f"🚀 [{datetime.now().strftime('%H:%M:%S')}] MONITORAGGIO v10.7 (FIX TUPLE) AVVIATO...")
     while True:
         try:
             conn = mysql.connector.connect(**DB_CONFIG)
@@ -125,14 +111,18 @@ def run_price_monitor():
             for p in products:
                 new_price, deal = get_amazon_data(p['asin'])
                 if new_price:
-                    if abs(float(p['current_price']) - new_price) > 0.01 or deal:
+                    is_changed = abs(float(p['current_price']) - new_price) > 0.01
+                    if is_changed or deal:
                         update_wp_post_price(p['wp_post_id'], p['current_price'], new_price, deal)
                         
-                        if abs(float(p['current_price']) - new_price) > 0.01:
+                        if is_changed:
+                            print(f"   💰 {p['asin']}: CAMBIATO! €{p['current_price']} -> €{new_price}")
                             u_conn = mysql.connector.connect(**DB_CONFIG)
                             u_curr = u_conn.cursor()
+                            # FIX SINTASSI: placeholders espliciti (%s, %s) invece di %s singolo con tupla nidificata
+                            query = "INSERT INTO price_history (product_id, price) VALUES (%s, %s)"
+                            u_curr.execute(query, (p['id'], new_price))
                             u_curr.execute("UPDATE products SET current_price = %s WHERE id = %s", (new_price, p['id']))
-                            u_curr.execute("INSERT INTO price_history (product_id, price) VALUES %s", ((p['id'], new_price),))
                             u_conn.commit()
                             u_conn.close()
                 time.sleep(15)
