@@ -26,7 +26,6 @@ def get_wp_headers():
     return {'Authorization': f'Basic {token.decode("utf-8")}', 'Content-Type': 'application/json'}
 
 def get_amazon_data(asin):
-    """Restituisce (prezzo_float, tipo_offerta_stringa)"""
     url = f"https://www.amazon.it/dp/{asin}?tag=recensionedigitale-21"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"}
     try:
@@ -34,14 +33,12 @@ def get_amazon_data(asin):
         if resp.status_code != 200: return None, None
         soup = BeautifulSoup(resp.content, "lxml")
         
-        # 1. Scraping Prezzo
         price_val = None
         price_el = soup.select_one('span.a-price span.a-offscreen')
         if price_el:
             price_str = price_el.get_text().replace("€", "").replace(".", "").replace(",", ".").strip()
             price_val = float(price_str)
             
-        # 2. Scraping Offerte
         deal_type = None
         text_content = soup.get_text().lower()
         if "black friday" in text_content: deal_type = "🖤 Offerta Black Friday"
@@ -65,10 +62,10 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label):
         content = post_data['content']['raw']
         original_content = content
         
+        # Corretto: usiamo new_str ovunque
         new_str = f"{new_price:.2f}"
         diff = new_price - float(old_price)
         
-        # Determinazione Etichetta Dinamica
         if deal_label:
             status_text = deal_label
         elif diff < -0.01:
@@ -78,19 +75,19 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label):
         else:
             status_text = "⚖️ Prezzo Stabile"
 
-        # --- 1. AGGIORNAMENTO PREZZO (Metodo Universale P/DIV + Fix Corruzione) ---
+        # --- 1. AGGIORNAMENTO PREZZO ---
         price_pattern = r'(<(p|div)[^>]*color:\s?#b12704[^>]*>)(.*?)(</\2>)'
         
         if re.search(price_pattern, content, re.IGNORECASE):
-            content = re.sub(price_pattern, f'\\g<1>€ {new_s}\\g<4>', content, flags=re.IGNORECASE)
+            # FIX: Sostituito new_s con new_str
+            content = re.sub(price_pattern, f'\\g<1>€ {new_str}\\g<4>', content, flags=re.IGNORECASE)
         else:
-            # Ricostruzione se sparito
             reconstruct_pattern = r"(</h2>\s*)([\s\S]*?)(\s*<div style=\"(?:border-left|background-color: #fff; border: 1px solid #e1e1e1))"
             if re.search(reconstruct_pattern, content, re.IGNORECASE):
                 new_box = f"\n<p style='font-size:1.8rem; color:#B12704; margin-bottom:5px;'><strong>€ {new_str}</strong></p>\n"
                 content = re.sub(reconstruct_pattern, f"\\g<1>{new_box}\\g<3>", content, flags=re.IGNORECASE)
 
-        # --- 2. AGGIORNAMENTO ETICHETTA (Supporta SMALL e DIV di stato) ---
+        # --- 2. AGGIORNAMENTO ETICHETTA ---
         label_pattern = r'(<(small|div)[^>]*>)(Analisi in corso\.\.\.|Monitoraggio.*?|⚖️.*?|📉.*?|📈.*?|⚡.*?|🖤.*?|🏷️.*?)(</\2>)'
         content = re.sub(label_pattern, f'\\g<1>{status_text}\\g<4>', content, count=2, flags=re.IGNORECASE)
 
@@ -103,7 +100,6 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label):
         content = re.sub(json_fix_pattern, f'\\g<1>"price": "{new_str}"\\g<3>', content)
         content = re.sub(r'("price":\s?")([\d\.]+)(",)', f'\\1{new_str}\\3', content)
 
-        # --- 5. INVIO AL SERVER ---
         if content != original_content: 
             up_resp = requests.post(f"{WP_API_URL}/posts/{wp_post_id}", headers=headers, json={'content': content})
             if up_resp.status_code == 200:
@@ -117,7 +113,7 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label):
         print(f"      ❌ Errore critico: {e}")
 
 def run_price_monitor():
-    print(f"🚀 [{datetime.now().strftime('%H:%M:%S')}] MONITORAGGIO v10 (EVENT TRIGGER) AVVIATO...")
+    print(f"🚀 [{datetime.now().strftime('%H:%M:%S')}] MONITORAGGIO v10.1 (BUG FIXED) AVVIATO...")
     while True:
         conn = None
         try:
@@ -131,25 +127,20 @@ def run_price_monitor():
             for p_id, asin, old_price, wp_id in products:
                 new_price, deal = get_amazon_data(asin)
                 
-                # --- LOGICA DI ATTIVAZIONE AGGIORNATA ---
                 price_changed = new_price and abs(float(old_price) - new_price) > 0.01
-                event_detected = deal is not None # Se c'è un badge speciale (Black Friday, ecc)
+                event_detected = deal is not None
                 
                 if price_changed or event_detected:
                     if price_changed:
                         print(f"   💰 {asin}: CAMBIATO! €{old_price} -> €{new_price} {'['+deal+']' if deal else ''}")
-                        # Aggiorniamo Database solo se il prezzo è effettivamente cambiato
                         cursor.execute("UPDATE products SET current_price = %s WHERE id = %s", (new_price, p_id))
                         cursor.execute("INSERT INTO price_history (product_id, price) VALUES (%s, %s)", (p_id, new_price))
                         conn.commit()
                     else:
-                        print(f"   🔥 {asin}: PREZZO STABILE MA EVENTO RILEVATO: [{deal}]")
+                        print(f"   🔥 {asin}: EVENTO RILEVATO: [{deal}]")
                     
-                    # Aggiorniamo SEMPRE WordPress se il prezzo è cambiato O se c'è un evento
-                    # Passiamo il new_price se disponibile, altrimenti l'old_price
-                    final_price_to_send = new_price if new_price else float(old_price)
-                    update_wp_post_price(wp_id, old_price, final_price_to_send, deal)
-                
+                    final_price = new_price if new_price else float(old_price)
+                    update_wp_post_price(wp_id, old_price, final_price, deal)
                 else:
                     print(f"   ⚖️ {asin}: Stabile (€{old_price}) - Nessun evento.")
                 
