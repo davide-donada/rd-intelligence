@@ -48,6 +48,7 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label):
     headers = get_wp_headers()
     try:
         resp = requests.get(f"{WP_API_URL}/posts/{wp_post_id}?context=edit", headers=headers)
+        if resp.status_code != 200: return
         content = resp.json()['content']['raw']
         original_content = content
         
@@ -64,42 +65,46 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label):
         else:
             status_text = "⚖️ Prezzo Stabile"
 
-        # HTML del widget grigio da iniettare se manca
-        label_html = f"""<div style="background: #6c757d1a; border-left: 5px solid #6c757d; padding: 10px 15px; margin: 10px 0; border-radius: 4px;">
-<div style="font-weight: bold; color: #6c757d; text-transform: uppercase; font-size: 0.85rem;">Stato Offerta</div>
-<div style="font-size: 0.8rem; color: #555;">{status_text}</div>
-</div>"""
+        # Widget HTML da iniettare
+        label_html = f'\n<div style="background: #6c757d1a; border-left: 5px solid #6c757d; padding: 10px 15px; margin: 10px 0; border-radius: 4px;">' \
+                     f'<div style="font-weight: bold; color: #6c757d; text-transform: uppercase; font-size: 0.85rem;">Stato Offerta</div>' \
+                     f'<div style="font-size: 0.8rem; color: #555;">{status_text}</div></div>'
 
         # --- 2. AGGIORNAMENTO PREZZO ---
-        # Cerchiamo sia il tag generico rosso sia la nuova classe rd-price-box
+        # Usiamo solo \g<n> per evitare collisioni con i numeri
         price_pattern = r'(<(p|div)[^>]*(?:color:\s?#b12704|rd-price-box)[^>]*>)(.*?)(</\2>)'
-        content = re.sub(price_pattern, f'\\g<1>€ {new_str}\\g<4>', content, flags=re.IGNORECASE)
-
-        # --- 3. AGGIORNAMENTO O INIEZIONE ETICHETTA ---
-        label_regex = r'(<(small|div)[^>]*>)(Analisi in corso\.\.\.|Monitoraggio.*?|⚖️.*?|📉.*?|📈.*?|⚡.*?|🖤.*?|🏷️.*?|Stato Offerta.*?)(</\2>)'
         
-        if re.search(label_regex, content, re.IGNORECASE):
-            # Se esiste già, aggiorna il testo dentro il tag
+        # --- 3. AGGIORNAMENTO O INIEZIONE ETICHETTA ---
+        label_pattern = r'(<(small|div)[^>]*>)(Analisi in corso\.\.\.|Monitoraggio.*?|⚖️.*?|📉.*?|📈.*?|⚡.*?|🖤.*?|🏷️.*?|Stato Offerta.*?)(</\2>)'
+        
+        if re.search(label_pattern, content, re.IGNORECASE):
+            # Se l'etichetta c'è, la aggiorniamo (Prezzo aggiornato separatamente)
+            content = re.sub(price_pattern, f'\\g<1>€ {new_str}\\g<4>', content, flags=re.IGNORECASE)
             content = re.sub(label_pattern, f'\\g<1>{status_text}\\g<4>', content, count=2, flags=re.IGNORECASE)
         else:
-            # SE NON ESISTE: Lo iniettiamo subito dopo il blocco del prezzo
-            print(f"      🏷️ Etichetta mancante su ID {wp_post_id}: Iniezione in corso...")
-            content = re.sub(price_pattern, f'\\g<1>€ {new_str}\\g<4>\n{label_html}', content, flags=re.IGNORECASE)
+            # Se manca, iniettiamo Prezzo + Etichetta tutto insieme usando \g<>
+            print(f"      🏷️ Iniezione Widget su ID {wp_post_id}")
+            content = re.sub(price_pattern, f'\\g<1>€ {new_str}\\g<4>{label_html}', content, flags=re.IGNORECASE)
 
-        # --- 4. DATA E JSON ---
+        # --- 4. DATA E JSON (Sempre con \g<>) ---
         today = datetime.now().strftime('%d/%m/%Y')
-        content = re.sub(r'Prezzo aggiornato al:.*?</p>', f'Prezzo aggiornato al: {today}</p>', content)
-        content = re.sub(r'("price":\s?")([\d\.]+)(",)', f'\\1{new_str}\\3', content)
+        content = re.sub(r'(Prezzo aggiornato al:\s?)(.*?)(\s*</p>)', f'\\g<1>{today}\\g<3>', content)
+        
+        json_fix_pattern = r'("offers":\s*\{"@type":\s*"Offer",\s*)(.*?)(,\s*"priceCurrency")'
+        content = re.sub(json_fix_pattern, f'\\g<1>"price": "{new_str}"\\g<3>', content)
+        content = re.sub(r'("price":\s?")([\d\.]+)(",)', f'\\g<1>{new_str}\\g<3>', content)
 
+        # --- 5. INVIO ---
         if content != original_content: 
-            requests.post(f"{WP_API_URL}/posts/{wp_post_id}", headers=headers, json={'content': content})
-            print(f"      ✨ WP Aggiornato (ID: {wp_post_id}) -> € {new_str} | {status_text}")
+            up_resp = requests.post(f"{WP_API_URL}/posts/{wp_post_id}", headers=headers, json={'content': content})
+            if up_resp.status_code == 200:
+                print(f"      ✨ WP Aggiornato (ID: {wp_post_id}) -> € {new_str} | {status_text}")
 
     except Exception as e:
         print(f"      ❌ Errore critico: {e}")
 
 def run_price_monitor():
-    print(f"🚀 [{datetime.now().strftime('%H:%M:%S')}] MONITORAGGIO v10.4 (LABEL INJECTOR) AVVIATO...")
+    print(f"🚀 [{datetime.now().strftime('%H:%M:%S')}] MONITORAGGIO v10.5 (FINAL SHIELD) AVVIATO...")
     while True:
         try:
             conn = mysql.connector.connect(**DB_CONFIG)
@@ -111,11 +116,9 @@ def run_price_monitor():
             for p in products:
                 new_price, deal = get_amazon_data(p['asin'])
                 if new_price:
-                    # Trigger: prezzo cambiato o evento speciale
                     if abs(float(p['current_price']) - new_price) > 0.01 or deal:
                         update_wp_post_price(p['wp_post_id'], p['current_price'], new_price, deal)
                         
-                        # Update DB solo se il prezzo è cambiato
                         if abs(float(p['current_price']) - new_price) > 0.01:
                             u_conn = mysql.connector.connect(**DB_CONFIG)
                             u_curr = u_conn.cursor()
