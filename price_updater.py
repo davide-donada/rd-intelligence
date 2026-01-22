@@ -53,44 +53,49 @@ def update_wp_post_price(wp_post_id, old_price, new_price):
         content = post_data['content']['raw']
         original_content = content
         
-        new_str_dot = f"{new_price:.2f}" # 432.61
+        new_str_dot = f"{new_price:.2f}" # Es: 929.00
         
-        # HTML del blocco prezzo corretto (da usare per ricostruire)
+        # HTML del blocco prezzo corretto (per ricostruzione totale)
         clean_price_html = f"<p style='font-size:1.8rem; color:#B12704; margin-bottom:5px;'><strong>€ {new_str_dot}</strong></p>"
 
-        # --- FASE 1: Ricerca Standard (Il box rosso esiste ed è sano) ---
+        # --- FASE 1: Ricerca Standard (Il box rosso esiste) ---
         pattern_std = r"(<p[^>]*color:\s?#B12704[^>]*>\s*<strong>\s*€\s?)([\d\.,]+)(\s*</strong>\s*</p>)"
         
-        # --- FASE 2: Ricerca Corrotta (Il box rosso esiste ma contiene spazzatura tipo 'c1.73') ---
+        # --- FASE 2: Ricerca Corrotta (Il box rosso esiste ma ha dentro spazzatura) ---
         pattern_fix = r"(<p[^>]*color:\s?#B12704[^>]*>\s*<strong>)(.*?)(</strong>\s*</p>)"
 
-        # --- FASE 3: RICOSTRUZIONE (Il box rosso è sparito) ---
-        # Cerchiamo lo spazio tra la fine del titolo (</h2>) e l'inizio del widget (border-left)
-        # E catturiamo qualsiasi spazzatura ci sia in mezzo (tipo 'c1.73' nudo e crudo)
+        # --- FASE 3: RICOSTRUZIONE (Box sparito) ---
         pattern_reconstruct = r"(</h2>\s*)([\s\S]*?)(\s*<div style=\"border-left)"
 
+        # APPLICAZIONE REGEX CON SINTASSI SAFE (\g<1> invece di \1)
         if re.search(pattern_std, content, re.IGNORECASE):
             print("      🔧 Metodo 1: Aggiornamento Standard.")
-            content = re.sub(pattern_std, f"\\1{new_str_dot}\\3", content, flags=re.IGNORECASE)
+            content = re.sub(pattern_std, f"\\g<1>{new_str_dot}\\g<3>", content, flags=re.IGNORECASE)
             
         elif re.search(pattern_fix, content, re.IGNORECASE):
-            print("      🔧 Metodo 2: Riparazione Contenuto (Box Rosso esistente).")
-            content = re.sub(pattern_fix, f"\\1€ {new_str_dot}\\3", content, flags=re.IGNORECASE)
+            print("      🔧 Metodo 2: Riparazione Contenuto.")
+            content = re.sub(pattern_fix, f"\\g<1>€ {new_str_dot}\\g<3>", content, flags=re.IGNORECASE)
             
         elif re.search(pattern_reconstruct, content, re.IGNORECASE):
-            print("      🔧 Metodo 3: RICOSTRUZIONE TOTALE (Box Rosso mancante).")
-            # Sostituisce: Titolo + [Spazzatura] + Widget  --->  Titolo + [NUOVO PREZZO HTML] + Widget
-            content = re.sub(pattern_reconstruct, f"\\1\n{clean_price_html}\n\\3", content, flags=re.IGNORECASE)
+            print("      🔧 Metodo 3: RICOSTRUZIONE TOTALE.")
+            content = re.sub(pattern_reconstruct, f"\\g<1>\n{clean_price_html}\n\\g<3>", content, flags=re.IGNORECASE)
         
         else:
-            print("      ⚠️ Nessun punto di ancoraggio trovato. HTML troppo compromesso.")
+            print("      ⚠️ Nessun punto di ancoraggio trovato. Provo fallback testuale.")
+            # Fallback testuale (sicuro perché non usa regex group replacement)
+            old_str = f"{float(old_price):.2f}"
+            if old_str in content:
+                content = content.replace(old_str, new_str_dot)
 
-        # --- FIX SCHEMA JSON (Gestione casi disperati 'c2.64') ---
-        # Cerca: "offers": { ... "priceCurrency"
-        # Ricostruisce l'intera riga dell'offerta per sicurezza
+        # --- FIX SCHEMA JSON ---
+        # Usa \g<1> per evitare conflitti se il prezzo inizia con una cifra che matcha un gruppo
         json_pattern = r'("offers":\s*\{"@type":\s*"Offer",\s*)(.*?)(,\s*"priceCurrency")'
-        # Rimpiazza la parte centrale (che potrebbe essere 'c2.64"' o '"price": "..."') con quella corretta
-        content = re.sub(json_pattern, f'\\1"price": "{new_str_dot}"\\3', content)
+        content = re.sub(json_pattern, f'\\g<1>"price": "{new_str_dot}"\\g<3>', content)
+        
+        # Regex semplice per il vecchio formato schema se presente
+        old_json_pattern = r'("price":\s?")([\d\.]+)(",)'
+        if re.search(old_json_pattern, content):
+            content = re.sub(old_json_pattern, f'\\g<1>{new_str_dot}\\g<3>', content)
 
         # Aggiornamento Data
         today_str = datetime.now().strftime('%d/%m/%Y')
@@ -108,7 +113,7 @@ def update_wp_post_price(wp_post_id, old_price, new_price):
                 check_resp = requests.get(f"{WP_API_URL}/posts/{wp_post_id}?context=edit", headers=headers)
                 final_content = check_resp.json()['content']['raw']
                 if new_str_dot in final_content:
-                     print(f"      ✅ VERIFICA OK: Prezzo e HTML ripristinati.")
+                     print(f"      ✅ VERIFICA OK.")
                 else:
                      print(f"      💀 VERIFICA FALLITA.")
             else:
@@ -120,7 +125,7 @@ def update_wp_post_price(wp_post_id, old_price, new_price):
         print(f"      ❌ Errore critico: {e}")
 
 def run_price_monitor():
-    print(f"🚀 [{datetime.now().strftime('%H:%M:%S')}] MONITORAGGIO (V.RICOSTRUTTORE) AVVIATO...")
+    print(f"🚀 [{datetime.now().strftime('%H:%M:%S')}] MONITORAGGIO (V.6 SAFE) AVVIATO...")
     
     while True:
         conn = None
@@ -135,8 +140,6 @@ def run_price_monitor():
             for p_id, asin, old_price, wp_id in products:
                 new_price = get_amazon_price(asin)
                 
-                # Logica di update: Se cambia il prezzo OPPURE se sospettiamo corruzione (testiamo ogni volta)
-                # Per efficienza, controlliamo solo se cambia il prezzo > 0.01
                 if new_price and abs(float(old_price) - new_price) > 0.01:
                     print(f"   💰 {asin}: CAMBIATO! €{old_price} -> €{new_price}")
                     
