@@ -45,7 +45,7 @@ def update_wp_post_price(wp_post_id, old_price, new_price):
     
     headers = get_wp_headers()
     try:
-        # 1. Recupera il post (raw content)
+        # 1. Recupera il post
         resp = requests.get(f"{WP_API_URL}/posts/{wp_post_id}?context=edit", headers=headers)
         if resp.status_code != 200: return
         
@@ -53,47 +53,50 @@ def update_wp_post_price(wp_post_id, old_price, new_price):
         content = post_data['content']['raw']
         original_content = content
         
-        # Formattazione stringhe
-        new_str_dot = f"{new_price:.2f}"        # 432.61
-        new_str_comma = new_str_dot.replace('.', ',') # 432,61
+        new_str_dot = f"{new_price:.2f}" # 432.61
         
-        old_str_dot = f"{float(old_price):.2f}" # 432.64
-        old_str_comma = old_str_dot.replace('.', ',') # 432,64
-        
-        print(f"      🔎 Cerco vecchio prezzo: {old_str_dot} o {old_str_comma}")
+        # HTML del blocco prezzo corretto (da usare per ricostruire)
+        clean_price_html = f"<p style='font-size:1.8rem; color:#B12704; margin-bottom:5px;'><strong>€ {new_str_dot}</strong></p>"
 
-        # --- STRATEGIA 1: REGEX STRUTTURALE (Case Insensitive) ---
-        # Cerca il blocco rosso tipico, ma ignorando maiuscole/minuscole nel colore
-        pattern = r"(<p[^>]*color:\s?#B12704[^>]*>\s*<strong>\s*€\s?)([\d\.,]+)(\s*</strong>\s*</p>)"
+        # --- FASE 1: Ricerca Standard (Il box rosso esiste ed è sano) ---
+        pattern_std = r"(<p[^>]*color:\s?#B12704[^>]*>\s*<strong>\s*€\s?)([\d\.,]+)(\s*</strong>\s*</p>)"
         
-        match = re.search(pattern, content, re.IGNORECASE)
-        if match:
-            print("      🔧 Strategia 1 (Regex HTML) attivata.")
-            content = re.sub(pattern, f"\\1{new_str_dot}\\3", content, flags=re.IGNORECASE)
-        else:
-            # --- STRATEGIA 2: SOSTITUZIONE DIRETTA (BRUTE FORCE) ---
-            print("      ⚠️ HTML cambiato, passo a Strategia 2 (Sostituzione Diretta).")
+        # --- FASE 2: Ricerca Corrotta (Il box rosso esiste ma contiene spazzatura tipo 'c1.73') ---
+        pattern_fix = r"(<p[^>]*color:\s?#B12704[^>]*>\s*<strong>)(.*?)(</strong>\s*</p>)"
+
+        # --- FASE 3: RICOSTRUZIONE (Il box rosso è sparito) ---
+        # Cerchiamo lo spazio tra la fine del titolo (</h2>) e l'inizio del widget (border-left)
+        # E catturiamo qualsiasi spazzatura ci sia in mezzo (tipo 'c1.73' nudo e crudo)
+        pattern_reconstruct = r"(</h2>\s*)([\s\S]*?)(\s*<div style=\"border-left)"
+
+        if re.search(pattern_std, content, re.IGNORECASE):
+            print("      🔧 Metodo 1: Aggiornamento Standard.")
+            content = re.sub(pattern_std, f"\\1{new_str_dot}\\3", content, flags=re.IGNORECASE)
             
-            # Cerca il vecchio numero esatto nel testo e cambialo
-            # Nota: Sostituiamo solo se troviamo il numero esatto per evitare danni
-            if old_str_comma in content:
-                print(f"      🔧 Trovato {old_str_comma}, sostituisco con {new_str_comma}")
-                content = content.replace(old_str_comma, new_str_comma)
-            elif old_str_dot in content:
-                print(f"      🔧 Trovato {old_str_dot}, sostituisco con {new_str_dot}")
-                content = content.replace(old_str_dot, new_str_dot)
-            else:
-                print(f"      ❌ IMPOSSIBILE TROVARE IL VECCHIO PREZZO NEL TESTO.")
+        elif re.search(pattern_fix, content, re.IGNORECASE):
+            print("      🔧 Metodo 2: Riparazione Contenuto (Box Rosso esistente).")
+            content = re.sub(pattern_fix, f"\\1€ {new_str_dot}\\3", content, flags=re.IGNORECASE)
+            
+        elif re.search(pattern_reconstruct, content, re.IGNORECASE):
+            print("      🔧 Metodo 3: RICOSTRUZIONE TOTALE (Box Rosso mancante).")
+            # Sostituisce: Titolo + [Spazzatura] + Widget  --->  Titolo + [NUOVO PREZZO HTML] + Widget
+            content = re.sub(pattern_reconstruct, f"\\1\n{clean_price_html}\n\\3", content, flags=re.IGNORECASE)
+        
+        else:
+            print("      ⚠️ Nessun punto di ancoraggio trovato. HTML troppo compromesso.")
 
-        # Aggiornamento Data (Funziona sempre)
+        # --- FIX SCHEMA JSON (Gestione casi disperati 'c2.64') ---
+        # Cerca: "offers": { ... "priceCurrency"
+        # Ricostruisce l'intera riga dell'offerta per sicurezza
+        json_pattern = r'("offers":\s*\{"@type":\s*"Offer",\s*)(.*?)(,\s*"priceCurrency")'
+        # Rimpiazza la parte centrale (che potrebbe essere 'c2.64"' o '"price": "..."') con quella corretta
+        content = re.sub(json_pattern, f'\\1"price": "{new_str_dot}"\\3', content)
+
+        # Aggiornamento Data
         today_str = datetime.now().strftime('%d/%m/%Y')
         content = re.sub(r'Prezzo aggiornato al: \d{2}/\d{2}/\d{4}', f'Prezzo aggiornato al: {today_str}', content)
 
-        # Aggiornamento Schema JSON (Invisibile)
-        schema_pattern = r'("price":\s?")([\d\.]+)(",)'
-        content = re.sub(schema_pattern, f'\\1{new_str_dot}\\3', content)
-
-        # 2. INVIO DATI SE CAMBIATO
+        # 2. INVIO DATI
         if content != original_content: 
             update_data = {'content': content}
             up_resp = requests.post(f"{WP_API_URL}/posts/{wp_post_id}", headers=headers, json=update_data)
@@ -101,23 +104,23 @@ def update_wp_post_price(wp_post_id, old_price, new_price):
             if up_resp.status_code == 200:
                 print(f"      ✨ WordPress Aggiornato (ID: {wp_post_id}) -> € {new_str_dot}")
                 
-                # Verifica Immediata
+                # Verifica
                 check_resp = requests.get(f"{WP_API_URL}/posts/{wp_post_id}?context=edit", headers=headers)
                 final_content = check_resp.json()['content']['raw']
-                if new_str_dot in final_content or new_str_comma in final_content:
-                     print(f"      ✅ VERIFICA OK: Prezzo presente nel DB.")
+                if new_str_dot in final_content:
+                     print(f"      ✅ VERIFICA OK: Prezzo e HTML ripristinati.")
                 else:
                      print(f"      💀 VERIFICA FALLITA.")
             else:
                 print(f"      ❌ Errore API: {up_resp.text}")
         else:
-            print("      ⚠️ Nessuna modifica necessaria (Il testo contiene già il nuovo prezzo?)")
+            print("      ⚠️ Nessuna modifica necessaria.")
 
     except Exception as e:
         print(f"      ❌ Errore critico: {e}")
 
 def run_price_monitor():
-    print(f"🚀 [{datetime.now().strftime('%H:%M:%S')}] MONITORAGGIO (V.CARRO ARMATO) AVVIATO...")
+    print(f"🚀 [{datetime.now().strftime('%H:%M:%S')}] MONITORAGGIO (V.RICOSTRUTTORE) AVVIATO...")
     
     while True:
         conn = None
@@ -132,6 +135,8 @@ def run_price_monitor():
             for p_id, asin, old_price, wp_id in products:
                 new_price = get_amazon_price(asin)
                 
+                # Logica di update: Se cambia il prezzo OPPURE se sospettiamo corruzione (testiamo ogni volta)
+                # Per efficienza, controlliamo solo se cambia il prezzo > 0.01
                 if new_price and abs(float(old_price) - new_price) > 0.01:
                     print(f"   💰 {asin}: CAMBIATO! €{old_price} -> €{new_price}")
                     
@@ -139,7 +144,6 @@ def run_price_monitor():
                     cursor.execute("INSERT INTO price_history (product_id, price) VALUES (%s, %s)", (p_id, new_price))
                     conn.commit()
                     
-                    # Passiamo il vecchio prezzo per permettere la ricerca "Brute Force"
                     update_wp_post_price(wp_id, old_price, new_price)
                 else:
                     print(f"   ⚖️ {asin}: Stabile (€{old_price})")
