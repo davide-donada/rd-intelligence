@@ -3,8 +3,9 @@ import os
 import time
 from datetime import datetime
 
-# --- CONFIGURAZIONE ---
-# Usa le variabili d'ambiente per sicurezza, con fallback sui tuoi dati
+# --- CONFIGURAZIONE DATABASE ---
+# Utilizza le variabili d'ambiente per la sicurezza (impostate su Coolify)
+# Fallback sui dati inseriti per l'uso in locale
 DB_CONFIG = {
     'user': 'root',
     'password': os.getenv('DB_PASSWORD', 'FfEivO8tgJSGWkxEV84g4qIVvmZgspy8lnnS3O4eHiyZdM5vPq9cVg1ZemSDKHZL'),
@@ -13,7 +14,7 @@ DB_CONFIG = {
     'database': 'recensionedigitale'
 }
 
-# --- COLORI ANSI ---
+# --- DEFINIZIONE COLORI ANSI ---
 C_RESET  = "\033[0m"
 C_RED    = "\033[91m"
 C_GREEN  = "\033[92m"
@@ -23,13 +24,15 @@ C_CYAN   = "\033[96m"
 C_BOLD   = "\033[1m"
 
 def get_db_connection():
+    """Crea una nuova connessione al database MySQL."""
     return mysql.connector.connect(**DB_CONFIG)
 
 def clear_screen():
+    """Pulisce il terminale a seconda del sistema operativo."""
     os.system('cls' if os.name == 'nt' else 'clear')
 
 def get_recent_price_moves(cursor):
-    """Recupera gli ultimi 5 movimenti di prezzo dallo storico"""
+    """Recupera gli ultimi 5 movimenti di prezzo salvati nello storico."""
     try:
         query = """
             SELECT p.asin, p.title, h.price, h.recorded_at 
@@ -39,16 +42,17 @@ def get_recent_price_moves(cursor):
         """
         cursor.execute(query)
         return cursor.fetchall()
-    except:
+    except Exception:
         return []
 
 def show_status():
+    """Visualizza le statistiche, gli ultimi post e gli ultimi cambi prezzo."""
     conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # 1. Statistiche
+        # 1. Recupero Statistiche Generali
         cursor.execute("SELECT status, COUNT(*) FROM products GROUP BY status")
         stats = dict(cursor.fetchall())
         
@@ -58,76 +62,78 @@ def show_status():
         failed = stats.get('failed', 0)
         draft = stats.get('draft', 0)
 
-        print(f"\n{C_BOLD}📊 STATO SERVER (Control Room v2.1):{C_RESET}")
+        print(f"\n{C_BOLD}{C_CYAN}📊 RECAP SISTEMA (Control Room v2.3){C_RESET}")
         print(f"   ⏳ In Coda (Pending):       {C_CYAN}{pending}{C_RESET}")
         print(f"   ⚙️  In Lavorazione:          {C_YELLOW}{processing}{C_RESET}")
         print(f"   📝 Bozze (Draft):           {C_BLUE}{draft}{C_RESET}")
         print(f"   ✅ Pubblicati:              {C_GREEN}{published}{C_RESET}")
-        print(f"   ❌ Errori (Failed):         {C_RED}{failed}{C_RESET}")
-        print("─" * 60)
+        print(f"   ❌ Falliti (Failed):        {C_RED}{failed}{C_RESET}")
+        print("─" * 65)
 
-        # 2. Ultimi Pubblicati (CORRETTO: ORDER BY id DESC)
+        # 2. Visualizzazione Ultimi 5 Pubblicati
         print(f"\n{C_GREEN}✅ ULTIMI PUBBLICATI SU WORDPRESS:{C_RESET}")
-        # Qui usiamo ID invece di updated_at per evitare errori
+        # Usiamo ORDER BY id DESC per evitare errori su colonne inesistenti
         cursor.execute("SELECT asin, title, current_price FROM products WHERE status = 'published' ORDER BY id DESC LIMIT 5")
         recents = cursor.fetchall()
-        print(f"   {'ASIN':<12} | {'PREZZO':<10} | {'TITOLO'}")
+        
+        print(f"   {'ASIN':<12} | {'PREZZO':<9} | {'TITOLO'}")
         for r in recents:
-            title_short = (r[1][:45] + "...") if r[1] else "No Title"
-            print(f"   {r[0]:<12} | € {str(r[2]):<8} | {title_short}")
+            title_short = (r[1][:45] + "...") if r[1] else "Titolo non ancora disponibile"
+            print(f"   {r[0]:<12} | € {str(r[2]):<7} | {title_short}")
 
-        # 3. Ultimi Movimenti Prezzi
-        print(f"\n{C_YELLOW}💰 ULTIMI MOVIMENTI PREZZI (Price Updater):{C_RESET}")
+        # 3. Visualizzazione Ultimi Movimenti di Prezzo
+        print(f"\n{C_YELLOW}💰 ULTIMI MOVIMENTI PREZZI (Live Tracker):{C_RESET}")
         moves = get_recent_price_moves(cursor)
         if moves:
-            print(f"   {'ORARIO':<10} | {'ASIN':<12} | {'PREZZO':<10} | {'TITOLO'}")
+            print(f"   {'ORARIO':<8} | {'ASIN':<12} | {'PREZZO':<9} | {'TITOLO'}")
             for m in moves:
                 time_str = m[3].strftime("%H:%M")
-                title_short = (m[1][:35] + "...") if m[1] else "No Title"
-                print(f"   {time_str:<10} | {m[0]:<12} | € {str(m[2]):<8} | {title_short}")
+                title_short = (m[1][:38] + "...") if m[1] else "Titolo non disponibile"
+                print(f"   {time_str:<8} | {m[0]:<12} | € {str(m[2]):<7} | {title_short}")
         else:
-            print("   (Nessuno storico prezzi ancora disponibile)")
+            print("   (Nessuno storico prezzi registrato nell'ultima ora)")
 
     except Exception as e:
-        print(f"{C_RED}❌ Errore Connessione: {e}{C_RESET}")
+        print(f"{C_RED}❌ Errore durante l'aggiornamento dati: {e}{C_RESET}")
     finally:
         if conn: conn.close()
 
 def add_asin():
-    asin_input = input(f"\n{C_BOLD}Inserisci ASIN (o lista separata da virgola): {C_RESET}").strip()
-    asin_input = asin_input.replace("'", "").replace('"', '')
+    """Aggiunge uno o più ASIN al database in stato 'pending'."""
+    print(f"\n{C_BOLD}➕ AGGIUNGI PRODOTTI{C_RESET}")
+    asin_input = input(f"Inserisci ASIN (o più ASIN separati da virgola): ").strip()
     
     if not asin_input: return
 
-    asins = [x.strip() for x in asin_input.split(',')]
+    # Rimuoviamo eventuali virgolette o apici e dividiamo per virgola
+    asin_input = asin_input.replace("'", "").replace('"', '')
+    asins = [x.strip().upper() for x in asin_input.split(',')]
     
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    added = 0
+    added_count = 0
     for asin in asins:
         if len(asin) < 5: continue
         try:
+            # Controlliamo se esiste già
             cursor.execute("SELECT id FROM products WHERE asin = %s", (asin,))
             if cursor.fetchone():
-                print(f"   ⚠️  {asin} esiste già.")
+                print(f"   ⚠️  {asin} è già presente nel database.")
             else:
-                # Rimosso created_at se non esiste, o usato NOW()
-                # Se la tua tabella non ha created_at, usa:
-                cursor.execute("INSERT INTO products (asin, status) VALUES (%s, 'pending')", (asin,))
-                # Se invece esiste created_at, usa questa riga scommentandola:
-                # cursor.execute("INSERT INTO products (asin, status, created_at) VALUES (%s, 'pending', NOW())", (asin,))
-                added += 1
-                print(f"   ✅ {asin} aggiunto.")
+                cursor.execute("INSERT INTO products (asin, status, created_at) VALUES (%s, 'pending', NOW())", (asin,))
+                added_count += 1
+                print(f"   ✅ {asin} aggiunto correttamente alla coda.")
         except Exception as e:
-            print(f"   ❌ Errore {asin}: {e}")
+            print(f"   ❌ Errore tecnico con l'ASIN {asin}: {e}")
 
     conn.commit()
     conn.close()
-    print(f"\n--- Aggiunti {added} ASIN ---")
+    print(f"\n--- Operazione conclusa: {added_count} nuovi ASIN in coda ---")
     time.sleep(1.5)
 
 def reset_status(target_status, label):
+    """Sblocca o resetta i prodotti con uno stato specifico portandoli a 'pending'."""
     print(f"\n🚑 Reset prodotti '{label}' in corso...")
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -138,29 +144,31 @@ def reset_status(target_status, label):
         conn.commit()
         
         if count > 0:
-            print(f"   ✅ Sbloccati {count} prodotti! Ora sono di nuovo 'Pending'.")
+            print(f"   ✅ Successo: {count} prodotti sbloccati e riportati in stato 'Pending'.")
         else:
-            print(f"   👍 Nessun prodotto '{label}' trovato.")
+            print(f"   👍 Nessun prodotto in stato '{label}' trovato.")
             
     except Exception as e:
-        print(f"❌ Errore DB: {e}")
+        print(f"❌ Errore Database durante il reset: {e}")
     finally:
         conn.close()
     
-    input("\nPremi INVIO per tornare al menu...")
+    input("\nPremi INVIO per tornare alla dashboard...")
 
 def main_loop():
+    """Ciclo principale dell'applicazione terminale."""
     while True:
         clear_screen()
         show_status()
-        print(f"\n{C_BOLD}COMANDI:{C_RESET}")
-        print(" [1] ➕ Aggiungi Nuovo ASIN")
-        print(" [2] 🔄 Aggiorna Vista")
-        print(f" [3] 🚑 Sblocca prodotti {C_YELLOW}'In Lavorazione'{C_RESET} (Bloccati)")
-        print(f" [4] ♻️  Riprova prodotti {C_RED}'Failed'{C_RESET} (Errori)")
-        print(" [q] 👋 Esci")
         
-        choice = input("\nScelta > ").strip().lower()
+        print(f"\n{C_BOLD}COMANDI DISPONIBILI:{C_RESET}")
+        print(f" [{C_CYAN}1{C_RESET}] ➕ Aggiungi ASIN Amazon")
+        print(f" [{C_CYAN}2{C_RESET}] 🔄 Ricarica Schermata")
+        print(f" [{C_CYAN}3{C_RESET}] 🚑 Sblocca 'In Lavorazione' (Reset crash)")
+        print(f" [{C_CYAN}4{C_RESET}] ♻️  Riprova prodotti Falliti (Failed)")
+        print(f" [{C_RED}q{C_RESET}] 👋 Esci")
+        
+        choice = input("\nSeleziona un'opzione > ").strip().lower()
         
         if choice == '1':
             add_asin()
@@ -171,7 +179,7 @@ def main_loop():
         elif choice == '4':
             reset_status('failed', 'Falliti')
         elif choice == 'q':
-            print("Chiusura...")
+            print("Chiusura pannello admin...")
             break
 
 if __name__ == "__main__":
