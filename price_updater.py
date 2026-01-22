@@ -62,7 +62,6 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label):
         content = post_data['content']['raw']
         original_content = content
         
-        # Corretto: usiamo new_str ovunque
         new_str = f"{new_price:.2f}"
         diff = new_price - float(old_price)
         
@@ -76,10 +75,10 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label):
             status_text = "⚖️ Prezzo Stabile"
 
         # --- 1. AGGIORNAMENTO PREZZO ---
+        # Usiamo \g<1> e \g<4> per evitare conflitti con i numeri del prezzo
         price_pattern = r'(<(p|div)[^>]*color:\s?#b12704[^>]*>)(.*?)(</\2>)'
         
         if re.search(price_pattern, content, re.IGNORECASE):
-            # FIX: Sostituito new_s con new_str
             content = re.sub(price_pattern, f'\\g<1>€ {new_str}\\g<4>', content, flags=re.IGNORECASE)
         else:
             reconstruct_pattern = r"(</h2>\s*)([\s\S]*?)(\s*<div style=\"(?:border-left|background-color: #fff; border: 1px solid #e1e1e1))"
@@ -95,11 +94,16 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label):
         today_str = datetime.now().strftime('%d/%m/%Y')
         content = re.sub(r'Prezzo aggiornato al: \d{2}/\d{2}/\d{4}', f'Prezzo aggiornato al: {today_str}', content)
 
-        # --- 4. FIX SCHEMA JSON ---
+        # --- 4. FIX SCHEMA JSON (PULIZIA TOTALE) ---
+        # Qui usiamo solo \g<n> per la massima sicurezza
         json_fix_pattern = r'("offers":\s*\{"@type":\s*"Offer",\s*)(.*?)(,\s*"priceCurrency")'
         content = re.sub(json_fix_pattern, f'\\g<1>"price": "{new_str}"\\g<3>', content)
-        content = re.sub(r'("price":\s?")([\d\.]+)(",)', f'\\1{new_str}\\3', content)
+        
+        # Fallback JSON specifico per il prezzo isolato
+        json_price_isolated = r'("price":\s?")([\d\.]+)(",)'
+        content = re.sub(json_price_isolated, f'\\g<1>{new_str}\\g<3>', content)
 
+        # --- 5. INVIO AL SERVER ---
         if content != original_content: 
             up_resp = requests.post(f"{WP_API_URL}/posts/{wp_post_id}", headers=headers, json={'content': content})
             if up_resp.status_code == 200:
@@ -113,7 +117,7 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label):
         print(f"      ❌ Errore critico: {e}")
 
 def run_price_monitor():
-    print(f"🚀 [{datetime.now().strftime('%H:%M:%S')}] MONITORAGGIO v10.1 (BUG FIXED) AVVIATO...")
+    print(f"🚀 [{datetime.now().strftime('%H:%M:%S')}] MONITORAGGIO v10.2 (BULLETPROOF) AVVIATO...")
     while True:
         conn = None
         try:
