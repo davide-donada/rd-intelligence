@@ -69,15 +69,16 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label):
 <div class="rd-status-val" style="font-size: 0.8rem; color: #555;">{status_text}</div>
 </div>'''
 
+        # Definizione pattern (Uso backreference \2 solo per la chiusura del tag nel pattern)
         price_pattern = r'(<(p|div)[^>]*(?:color:\s?#b12704|rd-price-box)[^>]*>)(.*?)(</\2>)'
         class_pattern = r'(class="rd-status-val"[^>]*>)(.*?)(</div>)'
         header_fix_pattern = r'(uppercase; font-size: 0.85rem;">)(.*?)(</div>)'
-        old_label_pattern = r'(<(small|div)[^>]*>)(Analisi in corso\.\.\.|Monitoraggio.*?|⚖️.*?|📉.*?|📈.*?|⚡.*?|🖤.*?|🏷️.*?)(</\2>)'
+        old_label_pattern = r'(<(small|div)[^>]*>)(Analisi in corso\.\.\.|Monitoraggio.*?|⚖️.*?|📉.*?|📈.*?|⚡.*?|🖤.*?|🏷️.*?|Stato Offerta.*?)(</\2>)'
 
-        # Aggiornamento Prezzo
+        # 1. Aggiornamento Prezzo (Blindato con \g<>)
         content = re.sub(price_pattern, f'\\g<1>€ {new_str}\\g<4>', content, flags=re.IGNORECASE)
 
-        # Aggiornamento o Iniezione Etichetta
+        # 2. Aggiornamento Etichetta (Blindato con \g<>)
         if 'class="rd-status-val"' in content:
             content = re.sub(class_pattern, f'\\g<1>{status_text}\\g<3>', content, flags=re.IGNORECASE)
         elif "Stato Offerta" in content or "uppercase" in content:
@@ -86,20 +87,28 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label):
         else:
             content = re.sub(price_pattern, f'\\g<1>€ {new_str}\\g<4>{label_html}', content, flags=re.IGNORECASE)
 
-        # Data e JSON
+        # 3. Data (Blindato con \g<>)
         today = datetime.now().strftime('%d/%m/%Y')
         content = re.sub(r'(Prezzo aggiornato al:.*?>)(.*?)(</span>|</p>)', f'\\g<1>{today}\\g<3>', content, flags=re.IGNORECASE)
-        content = re.sub(r'("price":\s?")([\d\.]+)(",)', f'\\1{new_str}\\3', content)
+        
+        # 4. JSON (Blindato con \g<> - QUI C'ERA IL BUG)
+        json_main_pattern = r'("offers":\s*\{"@type":\s*"Offer",\s*)(.*?)(,\s*"priceCurrency")'
+        content = re.sub(json_main_pattern, f'\\g<1>"price": "{new_str}"\\g<3>', content)
+        
+        json_isolated_pattern = r'("price":\s?")([\d\.]+)(",)'
+        content = re.sub(json_isolated_pattern, f'\\g<1>{new_str}\\g<3>', content)
 
+        # 5. Invio
         if content != original_content: 
-            requests.post(f"{WP_API_URL}/posts/{wp_post_id}", headers=headers, json={'content': content})
-            print(f"      ✨ WP Aggiornato (ID: {wp_post_id}) -> € {new_str} | {status_text}")
+            up_resp = requests.post(f"{WP_API_URL}/posts/{wp_post_id}", headers=headers, json={'content': content})
+            if up_resp.status_code == 200:
+                print(f"      ✨ WP Aggiornato (ID: {wp_post_id}) -> € {new_str} | {status_text}")
 
     except Exception as e:
         print(f"      ❌ Errore critico: {e}")
 
 def run_price_monitor():
-    print(f"🚀 [{datetime.now().strftime('%H:%M:%S')}] MONITORAGGIO v10.7 (FIX TUPLE) AVVIATO...")
+    print(f"🚀 [{datetime.now().strftime('%H:%M:%S')}] MONITORAGGIO v10.8 (IRONCLAD) AVVIATO...")
     while True:
         try:
             conn = mysql.connector.connect(**DB_CONFIG)
@@ -119,9 +128,7 @@ def run_price_monitor():
                             print(f"   💰 {p['asin']}: CAMBIATO! €{p['current_price']} -> €{new_price}")
                             u_conn = mysql.connector.connect(**DB_CONFIG)
                             u_curr = u_conn.cursor()
-                            # FIX SINTASSI: placeholders espliciti (%s, %s) invece di %s singolo con tupla nidificata
-                            query = "INSERT INTO price_history (product_id, price) VALUES (%s, %s)"
-                            u_curr.execute(query, (p['id'], new_price))
+                            u_curr.execute("INSERT INTO price_history (product_id, price) VALUES (%s, %s)", (p['id'], new_price))
                             u_curr.execute("UPDATE products SET current_price = %s WHERE id = %s", (new_price, p['id']))
                             u_conn.commit()
                             u_conn.close()
