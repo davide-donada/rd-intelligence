@@ -32,39 +32,29 @@ def get_amazon_data(asin):
         resp = requests.get(url, headers=headers, timeout=20)
         if resp.status_code != 200: return None, None
         soup = BeautifulSoup(resp.content, "lxml")
-        
-        price_val = None
         price_el = soup.select_one('span.a-price span.a-offscreen')
-        if price_el:
-            price_str = price_el.get_text().replace("€", "").replace(".", "").replace(",", ".").strip()
-            price_val = float(price_str)
-            
+        price_val = float(price_el.get_text().replace("€", "").replace(".", "").replace(",", ".").strip()) if price_el else None
+        
         deal_type = None
-        text_content = soup.get_text().lower()
-        if "black friday" in text_content: deal_type = "🖤 Offerta Black Friday"
-        elif "prime day" in text_content: deal_type = "🔵 Offerta Prime Day"
-        elif "offerta a tempo" in text_content or soup.select_one('.a-badge-label'): 
-            deal_type = "⚡ Offerta a Tempo"
-        elif "festa delle offerte" in text_content: deal_type = "🎉 Festa delle Offerte"
+        txt = soup.get_text().lower()
+        if "black friday" in txt: deal_type = "🖤 Offerta Black Friday"
+        elif "offerta a tempo" in txt or soup.select_one('.a-badge-label'): deal_type = "⚡ Offerta a Tempo"
         
         return price_val, deal_type
-    except:
-        return None, None
+    except: return None, None
 
 def update_wp_post_price(wp_post_id, old_price, new_price, deal_label):
     if not wp_post_id or wp_post_id == 0: return
     headers = get_wp_headers()
     try:
         resp = requests.get(f"{WP_API_URL}/posts/{wp_post_id}?context=edit", headers=headers)
-        if resp.status_code != 200: return
-        
-        post_data = resp.json()
-        content = post_data['content']['raw']
+        content = resp.json()['content']['raw']
         original_content = content
         
         new_str = f"{new_price:.2f}"
         diff = new_price - float(old_price)
         
+        # 1. Definizione Testo Stato
         if deal_label:
             status_text = deal_label
         elif diff < -0.01:
@@ -74,90 +64,70 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label):
         else:
             status_text = "⚖️ Prezzo Stabile"
 
-        # --- 1. AGGIORNAMENTO PREZZO ---
-        # Usiamo \g<1> e \g<4> per evitare conflitti con i numeri del prezzo
-        price_pattern = r'(<(p|div)[^>]*color:\s?#b12704[^>]*>)(.*?)(</\2>)'
+        # HTML del widget grigio da iniettare se manca
+        label_html = f"""<div style="background: #6c757d1a; border-left: 5px solid #6c757d; padding: 10px 15px; margin: 10px 0; border-radius: 4px;">
+<div style="font-weight: bold; color: #6c757d; text-transform: uppercase; font-size: 0.85rem;">Stato Offerta</div>
+<div style="font-size: 0.8rem; color: #555;">{status_text}</div>
+</div>"""
+
+        # --- 2. AGGIORNAMENTO PREZZO ---
+        # Cerchiamo sia il tag generico rosso sia la nuova classe rd-price-box
+        price_pattern = r'(<(p|div)[^>]*(?:color:\s?#b12704|rd-price-box)[^>]*>)(.*?)(</\2>)'
+        content = re.sub(price_pattern, f'\\g<1>€ {new_str}\\g<4>', content, flags=re.IGNORECASE)
+
+        # --- 3. AGGIORNAMENTO O INIEZIONE ETICHETTA ---
+        label_regex = r'(<(small|div)[^>]*>)(Analisi in corso\.\.\.|Monitoraggio.*?|⚖️.*?|📉.*?|📈.*?|⚡.*?|🖤.*?|🏷️.*?|Stato Offerta.*?)(</\2>)'
         
-        if re.search(price_pattern, content, re.IGNORECASE):
-            content = re.sub(price_pattern, f'\\g<1>€ {new_str}\\g<4>', content, flags=re.IGNORECASE)
+        if re.search(label_regex, content, re.IGNORECASE):
+            # Se esiste già, aggiorna il testo dentro il tag
+            content = re.sub(label_pattern, f'\\g<1>{status_text}\\g<4>', content, count=2, flags=re.IGNORECASE)
         else:
-            reconstruct_pattern = r"(</h2>\s*)([\s\S]*?)(\s*<div style=\"(?:border-left|background-color: #fff; border: 1px solid #e1e1e1))"
-            if re.search(reconstruct_pattern, content, re.IGNORECASE):
-                new_box = f"\n<p style='font-size:1.8rem; color:#B12704; margin-bottom:5px;'><strong>€ {new_str}</strong></p>\n"
-                content = re.sub(reconstruct_pattern, f"\\g<1>{new_box}\\g<3>", content, flags=re.IGNORECASE)
+            # SE NON ESISTE: Lo iniettiamo subito dopo il blocco del prezzo
+            print(f"      🏷️ Etichetta mancante su ID {wp_post_id}: Iniezione in corso...")
+            content = re.sub(price_pattern, f'\\g<1>€ {new_str}\\g<4>\n{label_html}', content, flags=re.IGNORECASE)
 
-        # --- 2. AGGIORNAMENTO ETICHETTA ---
-        label_pattern = r'(<(small|div)[^>]*>)(Analisi in corso\.\.\.|Monitoraggio.*?|⚖️.*?|📉.*?|📈.*?|⚡.*?|🖤.*?|🏷️.*?)(</\2>)'
-        content = re.sub(label_pattern, f'\\g<1>{status_text}\\g<4>', content, count=2, flags=re.IGNORECASE)
+        # --- 4. DATA E JSON ---
+        today = datetime.now().strftime('%d/%m/%Y')
+        content = re.sub(r'Prezzo aggiornato al:.*?</p>', f'Prezzo aggiornato al: {today}</p>', content)
+        content = re.sub(r'("price":\s?")([\d\.]+)(",)', f'\\1{new_str}\\3', content)
 
-        # --- 3. AGGIORNAMENTO DATA ---
-        today_str = datetime.now().strftime('%d/%m/%Y')
-        content = re.sub(r'Prezzo aggiornato al: \d{2}/\d{2}/\d{4}', f'Prezzo aggiornato al: {today_str}', content)
-
-        # --- 4. FIX SCHEMA JSON (PULIZIA TOTALE) ---
-        # Qui usiamo solo \g<n> per la massima sicurezza
-        json_fix_pattern = r'("offers":\s*\{"@type":\s*"Offer",\s*)(.*?)(,\s*"priceCurrency")'
-        content = re.sub(json_fix_pattern, f'\\g<1>"price": "{new_str}"\\g<3>', content)
-        
-        # Fallback JSON specifico per il prezzo isolato
-        json_price_isolated = r'("price":\s?")([\d\.]+)(",)'
-        content = re.sub(json_price_isolated, f'\\g<1>{new_str}\\g<3>', content)
-
-        # --- 5. INVIO AL SERVER ---
         if content != original_content: 
-            up_resp = requests.post(f"{WP_API_URL}/posts/{wp_post_id}", headers=headers, json={'content': content})
-            if up_resp.status_code == 200:
-                print(f"      ✨ WP Aggiornato (ID: {wp_post_id}) -> € {new_str} | {status_text}")
-            else:
-                print(f"      ❌ Errore API WP: {up_resp.text}")
-        else:
-            print("      ⚠️ Nessuna modifica necessaria.")
+            requests.post(f"{WP_API_URL}/posts/{wp_post_id}", headers=headers, json={'content': content})
+            print(f"      ✨ WP Aggiornato (ID: {wp_post_id}) -> € {new_str} | {status_text}")
 
     except Exception as e:
         print(f"      ❌ Errore critico: {e}")
 
 def run_price_monitor():
-    print(f"🚀 [{datetime.now().strftime('%H:%M:%S')}] MONITORAGGIO v10.2 (BULLETPROOF) AVVIATO...")
+    print(f"🚀 [{datetime.now().strftime('%H:%M:%S')}] MONITORAGGIO v10.4 (LABEL INJECTOR) AVVIATO...")
     while True:
-        conn = None
         try:
             conn = mysql.connector.connect(**DB_CONFIG)
-            cursor = conn.cursor()
+            cursor = conn.cursor(dictionary=True)
             cursor.execute("SELECT id, asin, current_price, wp_post_id FROM products WHERE status = 'published'")
             products = cursor.fetchall()
+            conn.close()
             
-            print(f"📊 Scansione di {len(products)} prodotti...")
-            
-            for p_id, asin, old_price, wp_id in products:
-                new_price, deal = get_amazon_data(asin)
-                
-                price_changed = new_price and abs(float(old_price) - new_price) > 0.01
-                event_detected = deal is not None
-                
-                if price_changed or event_detected:
-                    if price_changed:
-                        print(f"   💰 {asin}: CAMBIATO! €{old_price} -> €{new_price} {'['+deal+']' if deal else ''}")
-                        cursor.execute("UPDATE products SET current_price = %s WHERE id = %s", (new_price, p_id))
-                        cursor.execute("INSERT INTO price_history (product_id, price) VALUES (%s, %s)", (p_id, new_price))
-                        conn.commit()
-                    else:
-                        print(f"   🔥 {asin}: EVENTO RILEVATO: [{deal}]")
-                    
-                    final_price = new_price if new_price else float(old_price)
-                    update_wp_post_price(wp_id, old_price, final_price, deal)
-                else:
-                    print(f"   ⚖️ {asin}: Stabile (€{old_price}) - Nessun evento.")
-                
-                time.sleep(15) 
-                
-            print(f"✅ Giro completato. Pausa 1 ora.")
+            for p in products:
+                new_price, deal = get_amazon_data(p['asin'])
+                if new_price:
+                    # Trigger: prezzo cambiato o evento speciale
+                    if abs(float(p['current_price']) - new_price) > 0.01 or deal:
+                        update_wp_post_price(p['wp_post_id'], p['current_price'], new_price, deal)
+                        
+                        # Update DB solo se il prezzo è cambiato
+                        if abs(float(p['current_price']) - new_price) > 0.01:
+                            u_conn = mysql.connector.connect(**DB_CONFIG)
+                            u_curr = u_conn.cursor()
+                            u_curr.execute("UPDATE products SET current_price = %s WHERE id = %s", (new_price, p['id']))
+                            u_curr.execute("INSERT INTO price_history (product_id, price) VALUES (%s, %s)", (p['id'], new_price))
+                            u_conn.commit()
+                            u_conn.close()
+                time.sleep(15)
             time.sleep(3600)
-            
         except Exception as e:
-            print(f"❌ Errore monitor: {e}")
+            print(f"❌ Errore: {e}")
             time.sleep(60)
-        finally:
-            if conn: conn.close()
 
 if __name__ == "__main__":
     run_price_monitor()
