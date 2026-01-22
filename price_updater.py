@@ -64,41 +64,48 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label):
         else:
             status_text = "⚖️ Prezzo Stabile"
 
+        # HTML del box da iniettare se manca (ora con classe unica)
         label_html = f'''\n<div style="background: #6c757d1a; border-left: 5px solid #6c757d; padding: 10px 15px; margin: 10px 0; border-radius: 4px;">
 <div style="font-weight: bold; color: #6c757d; text-transform: uppercase; font-size: 0.85rem;">Stato Offerta</div>
 <div class="rd-status-val" style="font-size: 0.8rem; color: #555;">{status_text}</div>
 </div>'''
 
-        # Definizione pattern (Uso backreference \2 solo per la chiusura del tag nel pattern)
+        # --- 1. AGGIORNAMENTO PREZZO ---
+        # Pattern chirurgico per il prezzo: cerca rd-price-box o il colore rosso
         price_pattern = r'(<(p|div)[^>]*(?:color:\s?#b12704|rd-price-box)[^>]*>)(.*?)(</\2>)'
-        class_pattern = r'(class="rd-status-val"[^>]*>)(.*?)(</div>)'
-        header_fix_pattern = r'(uppercase; font-size: 0.85rem;">)(.*?)(</div>)'
-        old_label_pattern = r'(<(small|div)[^>]*>)(Analisi in corso\.\.\.|Monitoraggio.*?|⚖️.*?|📉.*?|📈.*?|⚡.*?|🖤.*?|🏷️.*?|Stato Offerta.*?)(</\2>)'
-
-        # 1. Aggiornamento Prezzo (Blindato con \g<>)
         content = re.sub(price_pattern, f'\\g<1>€ {new_str}\\g<4>', content, flags=re.IGNORECASE)
 
-        # 2. Aggiornamento Etichetta (Blindato con \g<>)
+        # --- 2. AGGIORNAMENTO ETICHETTA (Anti-Doppione) ---
+        # Se esiste la classe specifica rd-status-val, usiamo quella (precisione 100%)
         if 'class="rd-status-val"' in content:
-            content = re.sub(class_pattern, f'\\g<1>{status_text}\\g<3>', content, flags=re.IGNORECASE)
-        elif "Stato Offerta" in content or "uppercase" in content:
-            content = re.sub(header_fix_pattern, f'\\g<1>Stato Offerta\\g<3>', content, count=1, flags=re.IGNORECASE)
-            content = re.sub(old_label_pattern, f'\\g<1>{status_text}\\g<4>', content, count=1, flags=re.IGNORECASE)
+            content = re.sub(r'(class="rd-status-val"[^>]*>)(.*?)(</div>)', f'\\g<1>{status_text}\\g<3>', content, flags=re.IGNORECASE)
+        
+        # Altrimenti, se c'è il box grigio vecchio/corrotto, lo ripariamo
+        elif "background: #6c757d1a" in content:
+            # Ripariamo l'intestazione (se era diventata "Ribasso")
+            content = re.sub(r'(uppercase; font-size: 0.85rem;">)(.*?)(</div>)', f'\\g<1>Stato Offerta\\g<3>', content, count=1, flags=re.IGNORECASE)
+            # Aggiorniamo solo il secondo div (il valore)
+            content = re.sub(r'(font-size: 0.8rem; color: #555;">)(.*?)(</div>)', f'\\g<1>{status_text}\\g<3>', content, count=1, flags=re.IGNORECASE)
+        
+        # Se non c'è proprio il box, lo iniettiamo MA SENZA CANCELLARE IMMAGINI
         else:
-            content = re.sub(price_pattern, f'\\g<1>€ {new_str}\\g<4>{label_html}', content, flags=re.IGNORECASE)
+            # Cerchiamo il prezzo. Se dopo il prezzo c'è un'immagine, NON iniettiamo nulla per sicurezza in questo giro.
+            # Inseriamo solo se subito dopo il prezzo NON c'è un tag img.
+            check_match = re.search(price_pattern, content, re.IGNORECASE)
+            if check_match:
+                # Iniezione sicura subito dopo la chiusura del tag prezzo
+                content = re.sub(price_pattern, f'\\g<1>€ {new_str}\\g<4>{label_html}', content, count=1, flags=re.IGNORECASE)
 
-        # 3. Data (Blindato con \g<>)
+        # --- 3. DATA E JSON ---
         today = datetime.now().strftime('%d/%m/%Y')
-        content = re.sub(r'(Prezzo aggiornato al:.*?>)(.*?)(</span>|</p>)', f'\\g<1>{today}\\g<3>', content, flags=re.IGNORECASE)
+        content = re.sub(r'(Prezzo aggiornato al:\s?)(.*?)(\s*</p>|</span>)', f'\\g<1>{today}\\g<3>', content, flags=re.IGNORECASE)
         
-        # 4. JSON (Blindato con \g<> - QUI C'ERA IL BUG)
-        json_main_pattern = r'("offers":\s*\{"@type":\s*"Offer",\s*)(.*?)(,\s*"priceCurrency")'
-        content = re.sub(json_main_pattern, f'\\g<1>"price": "{new_str}"\\g<3>', content)
-        
-        json_isolated_pattern = r'("price":\s?")([\d\.]+)(",)'
-        content = re.sub(json_isolated_pattern, f'\\g<1>{new_str}\\g<3>', content)
+        # Fix JSON blindato
+        json_pattern = r'("offers":\s*\{"@type":\s*"Offer",\s*)(.*?)(,\s*"priceCurrency")'
+        content = re.sub(json_pattern, f'\\g<1>"price": "{new_str}"\\g<3>', content)
+        content = re.sub(r'("price":\s?")([\d\.]+)(",)', f'\\g<1>{new_str}\\g<3>', content)
 
-        # 5. Invio
+        # --- 4. INVIO ---
         if content != original_content: 
             up_resp = requests.post(f"{WP_API_URL}/posts/{wp_post_id}", headers=headers, json={'content': content})
             if up_resp.status_code == 200:
@@ -108,7 +115,7 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label):
         print(f"      ❌ Errore critico: {e}")
 
 def run_price_monitor():
-    print(f"🚀 [{datetime.now().strftime('%H:%M:%S')}] MONITORAGGIO v10.8 (IRONCLAD) AVVIATO...")
+    print(f"🚀 [{datetime.now().strftime('%H:%M:%S')}] MONITORAGGIO v10.9 (SAFE & SURGICAL) AVVIATO...")
     while True:
         try:
             conn = mysql.connector.connect(**DB_CONFIG)
