@@ -21,7 +21,6 @@ WP_USER = os.getenv('WP_USER', 'davide')
 WP_APP_PASSWORD = os.getenv('WP_PASSWORD')
 
 def log(message):
-    """Stampa il messaggio con l'orario attuale preciso al secondo"""
     timestamp = datetime.now().strftime('%H:%M:%S')
     print(f"[{timestamp}] {message}", flush=True)
 
@@ -31,7 +30,10 @@ def get_wp_headers():
     return {'Authorization': f'Basic {token.decode("utf-8")}', 'Content-Type': 'application/json'}
 
 def get_amazon_data(asin):
-    url = f"https://www.amazon.it/dp/{asin}?tag=recensionedigitale-21"
+    # ⚠️ MODIFICA FONDAMENTALE: Usiamo l'URL pulito senza TAG per il controllo
+    # In questo modo non generiamo click falsi sul pannello Affiliati
+    url = f"https://www.amazon.it/dp/{asin}" 
+    
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"}
     try:
         resp = requests.get(url, headers=headers, timeout=15)
@@ -42,7 +44,6 @@ def get_amazon_data(asin):
         price_val = float(price_el.get_text().replace("€", "").replace(".", "").replace(",", ".").strip()) if price_el else None
         
         deal_type = None
-        # Scraper di precisione limitato all'area header
         badge_area = soup.select_one('#apex_desktop, .a-section.a-spacing-none.a-spacing-top-mini')
         badge_text = badge_area.get_text().lower() if badge_area else ""
 
@@ -113,7 +114,7 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label):
         return True
 
 def run_price_monitor():
-    log("🚀 MONITORAGGIO v11.5 (TIMESTAMPED) AVVIATO...")
+    log("🚀 MONITORAGGIO v11.6 (STEALTH SCRAPER) AVVIATO...")
     while True:
         try:
             conn = mysql.connector.connect(**DB_CONFIG)
@@ -149,7 +150,6 @@ def run_price_monitor():
                         log(f"      💰 CAMBIO RILEVATO: {p['asin']} -> € {new_price}")
                     
                     else:
-                        # LOG DI CONFERMA: Ora vedrai l'orario per ogni prodotto stabile
                         log(f"   ⚖️  {p['asin']} Stabile (€ {p['current_price']})")
                 
                 else:
