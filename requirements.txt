@@ -4,4 +4,4 @@ lxml
 mysql-connector-python
 openai
 youtube-search-python
-python-telegram-bot
+install curl_cffi

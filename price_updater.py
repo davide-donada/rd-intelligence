@@ -1,8 +1,10 @@
 import mysql.connector
-import requests
+import requests # Libreria standard per WP
+from curl_cffi import requests as browser_requests # Libreria speciale per Amazon
 import time
 import os
 import re
+import random
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 import base64
@@ -30,17 +32,51 @@ def get_wp_headers():
     return {'Authorization': f'Basic {token.decode("utf-8")}', 'Content-Type': 'application/json'}
 
 def get_amazon_data(asin):
-    # ⚠️ MODIFICA FONDAMENTALE: Usiamo l'URL pulito senza TAG per il controllo
-    # In questo modo non generiamo click falsi sul pannello Affiliati
-    url = f"https://www.amazon.it/dp/{asin}" 
+    """
+    Scarica i dati da Amazon simulando un browser reale (Chrome)
+    per evitare blocchi e CAPTCHA.
+    """
+    url = f"https://www.amazon.it/dp/{asin}"
     
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"}
+    # Headers completi per sembrare un utente vero
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept-Language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Referer": "https://www.google.com/"
+    }
+
     try:
-        resp = requests.get(url, headers=headers, timeout=15)
-        if resp.status_code != 200: return None, None
+        # Usa curl_cffi con impersonificazione Chrome
+        resp = browser_requests.get(
+            url, 
+            headers=headers, 
+            timeout=30, 
+            impersonate="chrome120"
+        )
+        
+        # Gestione errori HTTP
+        if resp.status_code == 503:
+            log(f"      ⚠️  Amazon 503 (Server Busy/Blocco) per {asin}")
+            return None, None
+        
+        if resp.status_code != 200: 
+            log(f"      ⚠️  Status Code non valido: {resp.status_code} per {asin}")
+            return None, None
+            
         soup = BeautifulSoup(resp.content, "lxml")
         
+        # Controllo se Amazon ci ha mandato un CAPTCHA
+        page_text = soup.get_text().lower()
+        if "inserisci i caratteri" in page_text or "enter the characters" in page_text:
+            log(f"      🤖  CAPTCHA rilevato per {asin} (Salto...)")
+            return None, None
+
+        # Ricerca del prezzo (selettore primario e fallback)
         price_el = soup.select_one('span.a-price span.a-offscreen')
+        if not price_el:
+            price_el = soup.select_one('.a-price .a-offscreen') # Fallback
+            
         price_val = float(price_el.get_text().replace("€", "").replace(".", "").replace(",", ".").strip()) if price_el else None
         
         deal_type = None
@@ -52,12 +88,15 @@ def get_amazon_data(asin):
         elif "prime day" in badge_text: deal_type = "🔵 Offerta Prime Day"
         
         return price_val, deal_type
-    except: return None, None
+    except Exception as e: 
+        log(f"      ❌ Errore connessione Amazon: {e}")
+        return None, None
 
 def update_wp_post_price(wp_post_id, old_price, new_price, deal_label):
     if not wp_post_id or wp_post_id == 0: return True
     headers = get_wp_headers()
     try:
+        # Usa requests standard per WP
         resp = requests.get(f"{WP_API_URL}/posts/{wp_post_id}?context=edit", headers=headers, timeout=20)
         
         if resp.status_code == 404:
@@ -86,7 +125,7 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label):
 <div class="rd-status-val" style="font-size: 0.8rem; color: #555;">{status_text}</div>
 </div>'''
 
-        # Regex Chirurgiche
+        # Regex Chirurgiche per aggiornamento HTML
         price_pattern = r'(<(p|div)[^>]*(?:color:\s?#b12704|rd-price-box)[^>]*>)(.*?)(</\2>)'
         content = re.sub(price_pattern, f'\\g<1>€ {new_str}\\g<4>', content, flags=re.IGNORECASE)
 
@@ -114,11 +153,12 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label):
         return True
 
 def run_price_monitor():
-    log("🚀 MONITORAGGIO v11.6 (STEALTH SCRAPER) AVVIATO...")
+    log("🚀 MONITORAGGIO v12.0 (STEALTH + CURL_CFFI) AVVIATO...")
     while True:
         try:
             conn = mysql.connector.connect(**DB_CONFIG)
             cursor = conn.cursor(dictionary=True)
+            # Recuperiamo i prodotti
             cursor.execute("SELECT id, asin, current_price, wp_post_id FROM products WHERE status = 'published'")
             products = cursor.fetchall()
             conn.close()
@@ -130,9 +170,11 @@ def run_price_monitor():
                 new_price, deal = get_amazon_data(p['asin'])
                 
                 if new_price:
+                    # Se abbiamo il prezzo, procediamo all'aggiornamento
                     post_exists = update_wp_post_price(p['wp_post_id'], p['current_price'], new_price, deal)
                     
                     if not post_exists:
+                        # Se il post WP non esiste più, cestiniamo il prodotto nel DB
                         u_conn = mysql.connector.connect(**DB_CONFIG)
                         u_curr = u_conn.cursor()
                         u_curr.execute("UPDATE products SET status = 'trash' WHERE id = %s", (p['id'],))
@@ -141,6 +183,7 @@ def run_price_monitor():
                         log(f"      ✅ ASIN {p['asin']} spostato nel cestino DB.")
                     
                     elif abs(float(p['current_price']) - new_price) > 0.01:
+                        # Se il prezzo è cambiato
                         u_conn = mysql.connector.connect(**DB_CONFIG)
                         u_curr = u_conn.cursor()
                         u_curr.execute("INSERT INTO price_history (product_id, price) VALUES (%s, %s)", (p['id'], new_price))
@@ -153,10 +196,16 @@ def run_price_monitor():
                         log(f"   ⚖️  {p['asin']} Stabile (€ {p['current_price']})")
                 
                 else:
-                    log(f"   ⚠️  Errore lettura Amazon per {p['asin']}")
+                    # Se new_price è None (Errore lettura o 503)
+                    log(f"   ⚠️  Errore lettura Amazon per {p['asin']} (Skip)")
 
-                time.sleep(15) 
+                # PAUSA DINAMICA ANTI-BOT (Fondamentale)
+                # Attende un tempo casuale tra 20 e 50 secondi per sembrare umano
+                wait_time = random.uniform(20, 50)
+                # log(f"      💤 Attesa {wait_time:.1f}s...") # Decommenta se vuoi vedere i tempi
+                time.sleep(wait_time) 
             
+            # Fine del giro completo
             next_run = datetime.now() + timedelta(hours=1)
             log(f"✅ Giro completato. Pausa 1 ora. Prossimo avvio: {next_run.strftime('%H:%M:%S')}")
             time.sleep(3600)
