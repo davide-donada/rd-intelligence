@@ -21,7 +21,7 @@ WP_API_URL = "https://www.recensionedigitale.it/wp-json/wp/v2"
 WP_USER = os.getenv('WP_USER', 'davide')
 WP_APP_PASSWORD = os.getenv('WP_PASSWORD')
 
-# Tag affiliato per i link Amazon (fondamentale per la stabilità della scansione)
+# TAG AFFILIATO: Fondamentale per evitare blocchi e garantire la lettura prezzi
 AMAZON_TAG = "recensionedi-21" 
 
 def log(message):
@@ -34,7 +34,7 @@ def get_wp_headers():
     return {'Authorization': f'Basic {token.decode("utf-8")}', 'Content-Type': 'application/json'}
 
 def get_amazon_data(asin):
-    # RIPRISTINATO: URL con Tag Affiliato
+    # Usiamo l'URL con TAG per massima affidabilità (Amazon blocca meno i link affiliati)
     url = f"https://www.amazon.it/dp/{asin}?tag={AMAZON_TAG}&th=1&psc=1"
     
     headers = {
@@ -54,14 +54,14 @@ def get_amazon_data(asin):
 
         soup = BeautifulSoup(resp.content, "lxml")
         
-        # Logica estrazione prezzo classica
+        # Logica Prezzo Standard
         price_el = soup.select_one('span.a-price span.a-offscreen')
         if not price_el:
             price_el = soup.select_one('.a-price .a-offscreen')
             
         price_val = float(price_el.get_text().replace("€", "").replace(".", "").replace(",", ".").strip()) if price_el else None
         
-        # Rilevamento tipo offerta
+        # Logica Offerte (Prime Day, Black Friday, Lampo)
         deal_type = None
         badge_area = soup.select_one('#apex_desktop, .a-section.a-spacing-none.a-spacing-top-mini')
         badge_text = badge_area.get_text().lower() if badge_area else ""
@@ -85,15 +85,23 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label):
         content = resp.json()['content']['raw']
         original_content = content
         
-        # --- LOGICA TABULA RASA (Fix per i box duplicati) ---
-        # Rimuove box "Monitoraggio avviato", "Prezzo Standard" e qualsiasi box "Stato Offerta" esistente
-        content = re.sub(r'<div[^>]*>.*?Monitoraggio appena avviato.*?</div>', '', content, flags=re.DOTALL | re.IGNORECASE)
-        content = re.sub(r'<div[^>]*>.*?PREZZO STANDARD.*?</div>', '', content, flags=re.DOTALL | re.IGNORECASE)
-        # Rimuove il container grigio dello stato per evitare duplicazioni
+        # --- FIX BUG IMMAGINI SCOMPARSE (REGEX CHIRURGICA) ---
+        # Cancelliamo SOLO i div che hanno esplicitamente lo stile 'border-left' o il colore di sfondo specifico.
+        # Questo impedisce di cancellare per errore il container principale che contiene l'immagine.
+        
+        # 1. Rimuove box "Monitoraggio avviato" (Solo se è un box grigio con bordo sinistro)
+        content = re.sub(r'<div[^>]*border-left[^>]*>.*?Monitoraggio appena avviato.*?</div>', '', content, flags=re.DOTALL | re.IGNORECASE)
+        
+        # 2. Rimuove box "Prezzo Standard" vecchi (Solo se stile corrisponde)
+        content = re.sub(r'<div[^>]*border-left[^>]*>.*?PREZZO STANDARD.*?</div>', '', content, flags=re.DOTALL | re.IGNORECASE)
+        
+        # 3. Rimuove eventuali duplicati "Stato Offerta" (Solo se background specifico)
         content = re.sub(r'<div[^>]*background:\s*#6c757d1a[^>]*>.*?Stato Offerta.*?</div>\s*(<div[^>]*>.*?</div>\s*)*</div>', '', content, flags=re.DOTALL | re.IGNORECASE)
+        
+        # 4. Pulizia sicura di residui orfani
         content = re.sub(r'<div class="rd-status-val".*?</div>', '', content, flags=re.DOTALL | re.IGNORECASE)
 
-        # Preparazione nuovo stato
+        # --- PREPARAZIONE NUOVO BOX DATI ---
         new_str = f"{new_price:.2f}"
         diff = new_price - float(old_price)
         
@@ -106,18 +114,23 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label):
         else:
             status_text = "⚖️ Prezzo Stabile"
 
-        # HTML del Box
+        # HTML del Box Stato
         label_html = f'''\n<div style="background: #6c757d1a; border-left: 5px solid #6c757d; padding: 10px 15px; margin: 10px 0; border-radius: 4px;">
 <div style="font-weight: bold; color: #6c757d; text-transform: uppercase; font-size: 0.85rem;">Stato Offerta</div>
 <div class="rd-status-val" style="font-size: 0.8rem; color: #555;">{status_text}</div>
 </div>'''
 
-        # Aggiornamento HTML
+        # --- AGGIORNAMENTO PREZZO E INSERIMENTO ---
+        # Regex per trovare il prezzo attuale (basata sul colore rosso tipico o classe rd-price-box)
         price_pattern = r'(<(p|div)[^>]*(?:color:\s?#b12704|rd-price-box)[^>]*>)(.*?)(</\2>)'
+        
+        # A. Aggiorna il numero del prezzo
         content = re.sub(price_pattern, f'\\g<1>€ {new_str}\\g<4>', content, flags=re.IGNORECASE)
+        
+        # B. Inserisce il box "Stato Offerta" SUBITO DOPO il prezzo (senza rompere il layout padre)
         content = re.sub(price_pattern, f'\\g<0>{label_html}', content, count=1, flags=re.IGNORECASE)
 
-        # Aggiorna Data e Schema.org
+        # Aggiorna Data e Schema JSON-LD (SEO)
         today = datetime.now().strftime('%d/%m/%Y')
         content = re.sub(r'(Prezzo aggiornato al:\s?)(.*?)(\s*</p>|</span>)', f'\\g<1>{today}\\g<3>', content, flags=re.IGNORECASE)
         content = re.sub(r'("price":\s?")([\d\.]+)(",)', f'\\g<1>{new_str}\\g<3>', content)
@@ -132,7 +145,7 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label):
         return True
 
 def run_price_monitor():
-    log("🚀 MONITORAGGIO v14.0 (CLASSIC + CLEANUP) AVVIATO...")
+    log("🚀 MONITORAGGIO v14.2 (FIX IMMAGINI) AVVIATO...")
     while True:
         try:
             conn = mysql.connector.connect(**DB_CONFIG)
@@ -150,6 +163,7 @@ def run_price_monitor():
                     update_wp_post_price(p['wp_post_id'], p['current_price'], new_price, deal)
                     
                     if abs(float(p['current_price']) - new_price) > 0.01:
+                        # Se il prezzo cambia, aggiorniamo il DB
                         u_conn = mysql.connector.connect(**DB_CONFIG)
                         u_curr = u_conn.cursor()
                         u_curr.execute("UPDATE products SET current_price = %s WHERE id = %s", (new_price, p['id']))
@@ -163,14 +177,13 @@ def run_price_monitor():
                 else:
                     log(f"   ⚠️  Errore lettura Amazon per {p['asin']}")
 
-                # Pausa standard tra i prodotti
                 time.sleep(15) 
             
             log(f"✅ Giro completato. Pausa 1 ora.")
             time.sleep(3600)
             
         except Exception as e:
-            log(f"❌ Errore critico: {e}")
+            log(f"❌ Errore critico nel loop: {e}")
             time.sleep(60)
 
 if __name__ == "__main__":
