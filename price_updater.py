@@ -7,6 +7,7 @@ import random
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 import base64
+import json
 
 # --- CONFIGURAZIONE ---
 DB_CONFIG = {
@@ -32,7 +33,7 @@ def get_wp_headers():
     return {'Authorization': f'Basic {token.decode("utf-8")}', 'Content-Type': 'application/json'}
 
 def get_amazon_data(asin):
-    # Link con TAG (Stabile e Affidabile)
+    # Link con TAG (Stabile)
     url = f"https://www.amazon.it/dp/{asin}?tag={AMAZON_TAG}&th=1&psc=1"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
@@ -41,13 +42,11 @@ def get_amazon_data(asin):
     }
     try:
         resp = requests.get(url, headers=headers, timeout=20)
-        
-        # Gestione errori Amazon
         if resp.status_code != 200: return None, None
         
         soup = BeautifulSoup(resp.content, "lxml")
         
-        # Selettore prezzo (Standard + Fallback)
+        # Selettore prezzo
         price_el = soup.select_one('span.a-price span.a-offscreen') or soup.select_one('.a-price .a-offscreen')
         price_val = float(price_el.get_text().replace("€", "").replace(".", "").replace(",", ".").strip()) if price_el else None
         
@@ -66,26 +65,34 @@ def get_amazon_data(asin):
 def update_wp_post_price(wp_post_id, old_price, new_price, deal_label):
     if not wp_post_id or wp_post_id == 0: return True
     headers = get_wp_headers()
+    
     try:
-        # Richiesta GET per leggere il post attuale
+        # 1. GET: Leggiamo il post
         resp = requests.get(f"{WP_API_URL}/posts/{wp_post_id}?context=edit", headers=headers, timeout=20)
         
-        # --- MODIFICA FONDAMENTALE: Rilevamento Post Cancellato ---
+        # A. Se il post non esiste fisicamente (404)
         if resp.status_code == 404:
-            log(f"      🗑️  Post WP #{wp_post_id} non trovato (Cancellato da WP).")
-            return False # Segnala che il post non esiste più
-        
+            log(f"      🗑️  Post WP #{wp_post_id} non trovato (404).")
+            return False 
+
+        # B. Se il post esiste MA è nel cestino (WP ritorna 200 o 403 ma con status 'trash')
+        if resp.status_code == 200:
+            post_data = resp.json()
+            if post_data.get('status') == 'trash':
+                log(f"      🗑️  Post WP #{wp_post_id} è nel cestino (Status: Trash).")
+                return False
+
         if resp.status_code != 200: 
-            return True # Altri errori (es. server down), riproviamo la prossima volta
+            return True # Errore generico server, riproviamo dopo
             
-        content = resp.json()['content']['raw']
+        content = post_data['content']['raw']
         original_content = content
         
-        # --- PULIZIA SPECIFICA (Non tocca il Flexbox) ---
+        # --- PULIZIA SPECIFICA ---
         content = re.sub(r'<div[^>]*background:\s*#6c757d1a[^>]*>.*?Monitoraggio avviato.*?</div>', '', content, flags=re.DOTALL | re.IGNORECASE)
         content = re.sub(r'<div[^>]*background:\s*#6c757d1a[^>]*>.*?Stato Offerta.*?</div>\s*(<div[^>]*>.*?</div>\s*)*</div>', '', content, flags=re.DOTALL | re.IGNORECASE)
 
-        # Preparazione Nuovo Box
+        # Preparazione Dati
         new_str = f"{new_price:.2f}"
         diff = new_price - float(old_price)
         status_text = deal_label if deal_label else (f"📉 Ribasso di € {abs(diff):.2f}" if diff < -0.01 else (f"📈 Rialzo di € {abs(diff):.2f}" if diff > 0.01 else "⚖️ Prezzo Stabile"))
@@ -95,38 +102,52 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label):
 <div class="rd-status-val" style="font-size: 0.8rem; color: #555;">{status_text}</div>
 </div>'''
 
-        # --- AGGIORNAMENTO SICURO (Supporta Flexbox e Vecchio Layout) ---
-        price_regex = r'(<div class="rd-price-box"[^>]*>)(.*?)(</div>)' # Nuovo Layout
+        # Aggiornamento HTML (Supporto Flexbox + Legacy)
+        price_regex = r'(<div class="rd-price-box"[^>]*>)(.*?)(</div>)' 
         
         if re.search(price_regex, content):
             content = re.sub(price_regex, f'\\g<1>€ {new_str}\\g<3>', content)
             content = re.sub(price_regex, f'\\g<0>{label_html}', content, count=1)
         else:
-            # Fallback Vecchio Layout
             old_regex = r'(<(p|div)[^>]*(?:color:\s?#b12704)[^>]*>)(.*?)(</\2>)'
             content = re.sub(old_regex, f'\\g<1>€ {new_str}\\g<4>', content)
             content = re.sub(old_regex, f'\\g<0>{label_html}', content, count=1)
 
-        # Aggiorna Data e Schema
         today = datetime.now().strftime('%d/%m/%Y')
         content = re.sub(r'(Prezzo aggiornato al:\s?)(.*?)(\s*</p>|</span>)', f'\\g<1>{today}\\g<3>', content, flags=re.IGNORECASE)
         content = re.sub(r'("price":\s?")([\d\.]+)(",)', f'\\g<1>{new_str}\\g<3>', content)
 
         if content != original_content: 
-            requests.post(f"{WP_API_URL}/posts/{wp_post_id}", headers=headers, json={'content': content})
-            log(f"      ✨ WP Aggiornato (ID: {wp_post_id}) -> € {new_str}")
+            # 2. POST: Inviamo aggiornamento
+            update_resp = requests.post(f"{WP_API_URL}/posts/{wp_post_id}", headers=headers, json={'content': content})
+            
+            # C. Gestione errore specifico "Non puoi modificare... cestino" durante il salvataggio
+            if update_resp.status_code in [400, 401, 403]:
+                try:
+                    err_json = update_resp.json()
+                    err_msg = err_json.get('message', '').lower()
+                    if 'cestino' in err_msg or 'trash' in err_msg or 'rest_cannot_edit' in err_json.get('code', ''):
+                        log(f"      🗑️  Errore WP in scrittura: Post #{wp_post_id} nel cestino.")
+                        return False
+                except: pass
+
+            if update_resp.status_code == 200:
+                log(f"      ✨ WP Aggiornato (ID: {wp_post_id}) -> € {new_str}")
+            else:
+                log(f"      ⚠️ Errore Update WP: {update_resp.status_code}")
+        
         return True
+
     except Exception as e:
-        log(f"      ❌ Errore API WP: {e}")
+        log(f"      ❌ Errore Critico WP API: {e}")
         return True
 
 def run_price_monitor():
-    log("🚀 MONITORAGGIO v15.1 (AUTO-CLEANING + FLEXBOX) AVVIATO...")
+    log("🚀 MONITORAGGIO v15.2 (TRASH DETECTOR) AVVIATO...")
     while True:
         try:
             conn = mysql.connector.connect(**DB_CONFIG)
             cursor = conn.cursor(dictionary=True)
-            # Prende solo prodotti pubblicati
             cursor.execute("SELECT id, asin, current_price, wp_post_id FROM products WHERE status = 'published'")
             products = cursor.fetchall()
             conn.close()
@@ -137,21 +158,20 @@ def run_price_monitor():
                 new_price, deal = get_amazon_data(p['asin'])
                 
                 if new_price:
-                    # Tenta l'aggiornamento su WP
+                    # Update WP e controlla esistenza post
                     post_exists = update_wp_post_price(p['wp_post_id'], p['current_price'], new_price, deal)
                     
-                    # --- GESTIONE POST CANCELLATI ---
+                    # SE IL POST NON ESISTE (O È NEL CESTINO) -> RIMUOVI DA DB
                     if not post_exists:
-                        # Se update_wp_post_price ritorna False (404 Not Found), cestiniamo il prodotto dal DB
                         conn = mysql.connector.connect(**DB_CONFIG)
                         cur = conn.cursor()
                         cur.execute("UPDATE products SET status = 'trash' WHERE id = %s", (p['id'],))
                         conn.commit()
                         conn.close()
-                        log(f"      🚫 ASIN {p['asin']} rimosso dal monitoraggio (Post WP non trovato).")
-                        continue # Passa al prossimo prodotto senza aggiornare il prezzo nel DB
+                        log(f"      🚫 ASIN {p['asin']} rimosso dal monitoraggio (Post Cestinato/Perso).")
+                        continue 
                     
-                    # Aggiornamento Prezzo DB (Solo se il post esiste ancora)
+                    # Aggiornamento Prezzo DB
                     if abs(float(p['current_price']) - new_price) > 0.01:
                         conn = mysql.connector.connect(**DB_CONFIG)
                         cur = conn.cursor()
@@ -163,7 +183,7 @@ def run_price_monitor():
                     else:
                         log(f"   ⚖️  {p['asin']} Stabile (€ {p['current_price']})")
                 
-                time.sleep(15) # Pausa tra un prodotto e l'altro
+                time.sleep(15)
             
             log(f"✅ Giro completato. Pausa 1 ora.")
             time.sleep(3600)
