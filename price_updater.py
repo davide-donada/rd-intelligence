@@ -21,7 +21,9 @@ DB_CONFIG = {
 WP_API_URL = "https://www.recensionedigitale.it/wp-json/wp/v2"
 WP_USER = os.getenv('WP_USER', 'davide')
 WP_APP_PASSWORD = os.getenv('WP_PASSWORD')
-AMAZON_TAG = "recensionedi-21" 
+
+# TAG AFFILIATO CORRETTO
+AMAZON_TAG = "recensionedigitale-21" 
 
 def log(message):
     timestamp = datetime.now().strftime('%H:%M:%S')
@@ -102,7 +104,7 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_t
         clean_img = clean_amazon_image_url(image_url)
         
         # --- GENERAZIONE HTML NUOVO (STRUTTURA CORRETTA) ---
-        # Nota: Il </div> di chiusura della colonna destra è DOPO la data.
+        # Nota: Il </div> di chiusura della colonna destra è DOPO la data e il bottone.
         
         new_html_block = f"""
 <div style="background-color: #fff; border: 1px solid #e1e1e1; padding: 20px; margin-bottom: 30px; border-radius: 8px; display: flex; flex-wrap: wrap; gap: 20px; align-items: center;">
@@ -128,17 +130,16 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_t
 
         # --- SOSTITUZIONE TOTALE (NUCLEAR OPTION) ---
         # Regex che cattura TUTTO il blocco prezzo, sia esso rotto, vecchio o nuovo.
-        # Cerca dall'inizio del div con bordo grigio fino alla fine del paragrafo della data.
-        # Questo sovrascrive anche i layout rotti dove il bottone è "scappato" fuori dal div.
         
-        # Pattern 1: Layout Flexbox (anche rotto)
+        # Pattern 1: Layout Flexbox (anche rotto/parziale)
+        # Cerca dall'inizio del div border fino alla fine del paragrafo data
         flex_pattern = r'(<div style="background-color: #fff; border: 1px solid #e1e1e1;[^>]*>.*?Prezzo aggiornato al:.*?</p>(?:\s*</div>)?)'
         
         # Pattern 2: Layout Vecchio Centrato
         old_pattern = r'<div style="text-align: center;">.*?Prezzo aggiornato al:.*?</div>'
 
         if re.search(flex_pattern, content, re.DOTALL):
-            # Trovato blocco Flex (o i suoi resti), lo sostituiamo interamente con quello nuovo corretto
+            # Trovato blocco Flex (o i suoi resti), lo sostituiamo interamente
             content = re.sub(flex_pattern, new_html_block, content, flags=re.DOTALL)
             
         elif re.search(old_pattern, content, re.DOTALL):
@@ -146,7 +147,7 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_t
             content = re.sub(old_pattern, new_html_block, content, flags=re.DOTALL)
             
         else:
-            # Non trovato nulla (nuovo post o layout irriconoscibile), lo mettiamo in cima
+            # Non trovato nulla, lo mettiamo in cima
             content = new_html_block + content
 
         # Aggiorna Data e Schema (Ridondanza di sicurezza)
@@ -177,12 +178,12 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_t
         return True
 
 def run_price_monitor():
-    log("🚀 MONITORAGGIO v15.9 (TOTAL REBUILD) AVVIATO...")
+    log("🚀 MONITORAGGIO v16.0 (FINAL FIX) AVVIATO...")
     while True:
         try:
             conn = mysql.connector.connect(**DB_CONFIG)
             cursor = conn.cursor(dictionary=True)
-            # SCARICHIAMO TUTTI I DATI NECESSARI
+            # Scarichiamo anche titolo e immagine per ricostruire il box se serve
             cursor.execute("SELECT id, asin, current_price, wp_post_id, title, image_url FROM products WHERE status = 'published' ORDER BY id DESC")
             products = cursor.fetchall()
             conn.close()
@@ -193,7 +194,7 @@ def run_price_monitor():
                 new_price, deal = get_amazon_data(p['asin'])
                 
                 if new_price:
-                    # Passiamo l'ASIN esplicitamente per ricostruire il link
+                    # Passiamo l'ASIN per ricostruire il link
                     post_exists = update_wp_post_price(
                         p['wp_post_id'], 
                         p['current_price'], 
