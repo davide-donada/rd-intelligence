@@ -35,6 +35,7 @@ def genera_recensione_seo(product_data):
     
     print(f"   🧠 AI al lavoro su: {title}...")
 
+    # Prompt aggiornato per forzare FAQ reali
     prompt_system = f"""
     Sei un recensore esperto di tecnologia ed elettrodomestici per il blog italiano "RecensioneDigitale.it".
     Scrivi una recensione approfondita, onesta e ottimizzata SEO per il prodotto indicato.
@@ -44,7 +45,10 @@ def genera_recensione_seo(product_data):
     2. Struttura l'articolo in HTML pulito (senza tag <html> o <body>, usa solo <h2>, <h3>, <p>).
     3. NON includere il titolo H1 o il prezzo nel testo (sono gestiti a parte).
     4. Includi una sezione "Conclusioni" netta.
-    5. Genera un JSON valido con i campi richiesti.
+    5. LE DOMANDE FREQUENTI (FAQ) DEVONO ESSERE REALI E SPECIFICHE per il prodotto.
+       - Esempi validi: "Quanto dura la batteria?", "È compatibile con iPhone?", "Si può lavare in lavastoviglie?".
+       - NON SCRIVERE MAI "Domanda 1" o "Domanda frequente". Inventa domande che un utente reale farebbe.
+    6. Genera un JSON valido con i campi richiesti.
 
     OUTPUT JSON RICHIESTO:
     {{
@@ -61,9 +65,9 @@ def genera_recensione_seo(product_data):
         ],
         "verdict_badge": "Consigliato",
         "faqs": [
-            {{ "question": "Domanda frequente 1?", "answer": "Risposta breve e precisa." }},
-            {{ "question": "Domanda frequente 2?", "answer": "Risposta." }},
-            {{ "question": "Domanda frequente 3?", "answer": "Risposta." }}
+            {{ "question": "Scrivi qui una domanda reale specifica sul prodotto", "answer": "Risposta breve e precisa." }},
+            {{ "question": "Altra domanda pertinente (es. durata, materiali, funzioni)", "answer": "Risposta." }},
+            {{ "question": "Terza domanda utile", "answer": "Risposta." }}
         ]
     }}
     """
