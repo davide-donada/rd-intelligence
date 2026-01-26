@@ -25,8 +25,9 @@ def get_headers():
     return {'Authorization': f'Basic {token.decode("utf-8")}', 'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0'}
 
 def clean_amazon_image_url(url):
+    """Pulisce URL Amazon per alta definizione (Regex migliorata)"""
     if not url or not isinstance(url, str): return ""
-    return re.sub(r'\._[A-Z0-9,_-]+_\.', '.', url)
+    return re.sub(r'\._[A-Z0-9,_\-]+_\.', '.', url)
 
 def upload_image_to_wp(image_url, title):
     if not image_url or not image_url.startswith('http'): return None
@@ -136,31 +137,48 @@ def analyze_price_history(product_id, current_price):
         rows = cursor.fetchall()
         conn.close()
         prices = [float(r[0]) for r in rows] if rows else [float(current_price)]
-        if len(prices) < 2: return "⚖️ PREZZO STANDARD", "#6c757d", "Monitoraggio appena avviato."
+        
+        # Logica semplificata per testo status
+        if len(prices) < 2: return "⚖️ Monitoraggio appena avviato", "#6c757d", ""
+        
         avg = sum(prices) / len(prices)
         current = float(current_price)
-        if current <= min(prices): return "🔥 OTTIMO PREZZO", "#28a745", "Minimo storico rilevato!"
-        return ("✅ BUON PREZZO", "#17a2b8", "Sotto la media recente.") if current < avg else ("⚖️ PREZZO MEDIO", "#ffc107", "In linea con il mercato.")
-    except: return "⚖️ PREZZO STANDARD", "#6c757d", ""
+        if current <= min(prices): return "🔥 Minimo storico!", "#28a745", ""
+        return ("✅ Sotto la media", "#17a2b8", "") if current < avg else ("⚖️ Prezzo Stabile", "#6c757d", "")
+    except: return "⚖️ Monitoraggio avviato", "#6c757d", ""
 
 def format_article_html(product, local_image_url, ai_data):
     p_id, asin, title, price = product[0], product[1], product[2], product[3]
     aff_link = f"https://www.amazon.it/dp/{asin}?tag=recensionedigitale-21"
     
-    p_verdict, p_color, p_desc = analyze_price_history(p_id, price)
-    price_widget = f"<div style='border-left:4px solid {p_color}; padding-left:15px; margin:20px 0;'><strong>{p_verdict}</strong><br><small>{p_desc}</small></div>"
+    # Analisi Prezzo: Recuperiamo il testo dello stato (es. "Monitoraggio appena avviato")
+    p_verdict, _, _ = analyze_price_history(p_id, price)
     
     today_str = datetime.now().strftime('%d/%m/%Y')
+    
+    # --- NUOVO HEADER FLEXBOX (Identico al Price Updater v15.9) ---
+    # Nota: Il </div> finale chiude correttamente tutto il blocco di destra DOPO il bottone e la data.
     header = f"""
-    <div style='text-align:center;'>
-        <a href='{aff_link}' target='_blank'><img src='{local_image_url}' style='max-height:400px; width:auto; border-radius:8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);'></a>
-        <h2 style='margin-top:20px;'>{title}</h2>
-        <p style='font-size:1.8rem; color:#B12704; margin-bottom:5px;'><strong>€ {price}</strong></p>
-        {price_widget}
-        <a href='{aff_link}' target='_blank' style='background:#ff9900; color:white; padding:15px 30px; text-decoration:none; border-radius:8px; font-weight:bold; font-size:1.1rem; display:inline-block; margin-top:10px; box-shadow: 0 2px 5px rgba(0,0,0,0.2); transition: all 0.2s ease;'>Vedi Offerta su Amazon</a>
-        <p style='font-size:0.75rem; color:#888; margin-top:8px;'>Prezzo aggiornato al: {today_str}</p>
+<div style="background-color: #fff; border: 1px solid #e1e1e1; padding: 20px; margin-bottom: 30px; border-radius: 8px; display: flex; flex-wrap: wrap; gap: 20px; align-items: center;">
+    <div style="flex: 1; text-align: center; min-width: 200px;">
+        <a href="{aff_link}" target="_blank" rel="nofollow noopener sponsored">
+            <img class="lazyload" style="max-height: 250px; width: auto; object-fit: contain;" src="{clean_amazon_image_url(local_image_url)}" alt="{title}" />
+        </a>
     </div>
-    """
+    <div style="flex: 1.5; min-width: 250px;">
+        <h2 style="margin-top: 0; font-size: 1.4rem;">{title}</h2>
+        <div class="rd-price-box" style="font-size: 2rem; color: #b12704; font-weight: bold; margin: 10px 0;">€ {price}</div>
+        <div style="background: #6c757d1a; border-left: 5px solid #6c757d; padding: 10px 15px; margin: 10px 0; border-radius: 4px;">
+            <div style="font-weight: bold; color: #6c757d; text-transform: uppercase; font-size: 0.85rem;">Stato Offerta</div>
+            <div class="rd-status-val" style="font-size: 0.8rem; color: #555;">{p_verdict}</div>
+        </div>
+        <a style="background-color: #ff9900; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;" href="{aff_link}" target="_blank" rel="nofollow noopener sponsored">
+            👉 Vedi Offerta su Amazon
+        </a>
+        <p style="font-size: 0.8rem; color: #666; margin-top: 5px;">Prezzo aggiornato al: {today_str}</p>
+    </div>
+</div>
+"""
     
     body = ai_data.get('html_content', '')
     pros_cons = generate_pros_cons_html(ai_data.get('pros', []), ai_data.get('cons', []))
