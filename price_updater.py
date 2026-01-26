@@ -70,12 +70,10 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label):
         # 1. GET: Leggiamo il post
         resp = requests.get(f"{WP_API_URL}/posts/{wp_post_id}?context=edit", headers=headers, timeout=20)
         
-        # A. Se il post non esiste fisicamente (404)
         if resp.status_code == 404:
             log(f"      🗑️  Post WP #{wp_post_id} non trovato (404).")
             return False 
 
-        # B. Se il post esiste MA è nel cestino (WP ritorna 200 o 403 ma con status 'trash')
         if resp.status_code == 200:
             post_data = resp.json()
             if post_data.get('status') == 'trash':
@@ -83,14 +81,24 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label):
                 return False
 
         if resp.status_code != 200: 
-            return True # Errore generico server, riproviamo dopo
+            return True 
             
         content = post_data['content']['raw']
         original_content = content
         
-        # --- PULIZIA SPECIFICA ---
-        content = re.sub(r'<div[^>]*background:\s*#6c757d1a[^>]*>.*?Monitoraggio avviato.*?</div>', '', content, flags=re.DOTALL | re.IGNORECASE)
+        # --- PULIZIA PROFONDA (DEEP CLEAN) ---
+        
+        # 1. Rimuove il vecchio blocco "PREZZO STANDARD" con bordo sinistro solido (quello dell'esempio buggato)
+        # Cerca un div che ha "border-left: 4px solid" e contiene "PREZZO STANDARD" o "Monitoraggio"
+        content = re.sub(r'<div[^>]*border-left:\s*4px\s*solid[^>]*>.*?(PREZZO STANDARD|Monitoraggio).*?</div>', '', content, flags=re.DOTALL | re.IGNORECASE)
+
+        # 2. Rimuove eventuali prezzi "nudi" (non nel box nuovo) che potrebbero essere rimasti
+        # Cerca paragrafi con stile rosso tipico dei prezzi vecchi ma fuori dal box rd-price-box
+        content = re.sub(r'<p[^>]*color:\s*#b12704[^>]*>.*?</p>', '', content, flags=re.DOTALL | re.IGNORECASE)
+
+        # 3. Rimuove duplicati dei box "Stato Offerta" (sfondo grigio chiaro)
         content = re.sub(r'<div[^>]*background:\s*#6c757d1a[^>]*>.*?Stato Offerta.*?</div>\s*(<div[^>]*>.*?</div>\s*)*</div>', '', content, flags=re.DOTALL | re.IGNORECASE)
+        content = re.sub(r'<div[^>]*background:\s*#6c757d1a[^>]*>.*?Monitoraggio avviato.*?</div>', '', content, flags=re.DOTALL | re.IGNORECASE)
 
         # Preparazione Dati
         new_str = f"{new_price:.2f}"
@@ -102,17 +110,24 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label):
 <div class="rd-status-val" style="font-size: 0.8rem; color: #555;">{status_text}</div>
 </div>'''
 
-        # Aggiornamento HTML (Supporto Flexbox + Legacy)
+        # --- AGGIORNAMENTO FLEXBOX ---
+        # Cerchiamo il div specifico del nuovo layout
         price_regex = r'(<div class="rd-price-box"[^>]*>)(.*?)(</div>)' 
         
         if re.search(price_regex, content):
+            # Aggiorna il numero
             content = re.sub(price_regex, f'\\g<1>€ {new_str}\\g<3>', content)
+            # Inserisce il box stato SUBITO DOPO il prezzo
             content = re.sub(price_regex, f'\\g<0>{label_html}', content, count=1)
         else:
-            old_regex = r'(<(p|div)[^>]*(?:color:\s?#b12704)[^>]*>)(.*?)(</\2>)'
-            content = re.sub(old_regex, f'\\g<1>€ {new_str}\\g<4>', content)
-            content = re.sub(old_regex, f'\\g<0>{label_html}', content, count=1)
+            # Se NON trova il layout Flexbox (caso raro ormai), prova a salvare il salvabile
+            # Ma dato che stiamo pulendo aggressivamente, è meglio non fare fallback strani che creano doppi prezzi.
+            # Se non c'è il box rd-price-box, logghiamo un warning e non tocchiamo per evitare danni.
+            log(f"      ⚠️ Layout Flexbox non trovato per ID {wp_post_id}. Salto aggiornamento grafico per sicurezza.")
+            # Aggiorniamo solo i metadati JSON-LD e data in fondo
+            pass
 
+        # Aggiorna Data e Schema (sempre)
         today = datetime.now().strftime('%d/%m/%Y')
         content = re.sub(r'(Prezzo aggiornato al:\s?)(.*?)(\s*</p>|</span>)', f'\\g<1>{today}\\g<3>', content, flags=re.IGNORECASE)
         content = re.sub(r'("price":\s?")([\d\.]+)(",)', f'\\g<1>{new_str}\\g<3>', content)
@@ -121,13 +136,12 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label):
             # 2. POST: Inviamo aggiornamento
             update_resp = requests.post(f"{WP_API_URL}/posts/{wp_post_id}", headers=headers, json={'content': content})
             
-            # C. Gestione errore specifico "Non puoi modificare... cestino" durante il salvataggio
             if update_resp.status_code in [400, 401, 403]:
                 try:
                     err_json = update_resp.json()
                     err_msg = err_json.get('message', '').lower()
                     if 'cestino' in err_msg or 'trash' in err_msg or 'rest_cannot_edit' in err_json.get('code', ''):
-                        log(f"      🗑️  Errore WP in scrittura: Post #{wp_post_id} nel cestino.")
+                        log(f"      🗑️  Errore WP: Post #{wp_post_id} nel cestino.")
                         return False
                 except: pass
 
@@ -143,7 +157,7 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label):
         return True
 
 def run_price_monitor():
-    log("🚀 MONITORAGGIO v15.2 (TRASH DETECTOR) AVVIATO...")
+    log("🚀 MONITORAGGIO v15.3 (DEEP CLEAN) AVVIATO...")
     while True:
         try:
             conn = mysql.connector.connect(**DB_CONFIG)
@@ -158,20 +172,17 @@ def run_price_monitor():
                 new_price, deal = get_amazon_data(p['asin'])
                 
                 if new_price:
-                    # Update WP e controlla esistenza post
                     post_exists = update_wp_post_price(p['wp_post_id'], p['current_price'], new_price, deal)
                     
-                    # SE IL POST NON ESISTE (O È NEL CESTINO) -> RIMUOVI DA DB
                     if not post_exists:
                         conn = mysql.connector.connect(**DB_CONFIG)
                         cur = conn.cursor()
                         cur.execute("UPDATE products SET status = 'trash' WHERE id = %s", (p['id'],))
                         conn.commit()
                         conn.close()
-                        log(f"      🚫 ASIN {p['asin']} rimosso dal monitoraggio (Post Cestinato/Perso).")
+                        log(f"      🚫 ASIN {p['asin']} rimosso (Post Cestinato).")
                         continue 
                     
-                    # Aggiornamento Prezzo DB
                     if abs(float(p['current_price']) - new_price) > 0.01:
                         conn = mysql.connector.connect(**DB_CONFIG)
                         cur = conn.cursor()
