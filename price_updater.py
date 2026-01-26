@@ -97,7 +97,7 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_t
         status_text = deal_label if deal_label else (f"📉 Ribasso di € {abs(diff):.2f}" if diff < -0.01 else (f"📈 Rialzo di € {abs(diff):.2f}" if diff > 0.01 else "⚖️ Prezzo Stabile"))
         today = datetime.now().strftime('%d/%m/%Y')
         
-        # LINK AMAZON RICOSTRUITO (FIX BUG LINK ROTTO)
+        # LINK AMAZON RICOSTRUITO
         affiliate_url = f"https://www.amazon.it/dp/{asin}?tag={AMAZON_TAG}"
         
         # --- GENERAZIONE NUOVO BOX FLEXBOX ---
@@ -132,7 +132,7 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_t
             
             old_layout_regex = r'<div style="text-align: center;">.*?Prezzo aggiornato al:.*?</div>'
             
-            # HTML COMPLETO NUOVO (Con il link corretto garantito)
+            # HTML COMPLETO NUOVO (Corretto: Il bottone e la data sono DENTRO il div di destra)
             new_html_block = f"""
 <div style="background-color: #fff; border: 1px solid #e1e1e1; padding: 20px; margin-bottom: 30px; border-radius: 8px; display: flex; flex-wrap: wrap; gap: 20px; align-items: center;">
     <div style="flex: 1; text-align: center; min-width: 200px;">
@@ -184,7 +184,7 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_t
         return True
 
 def run_price_monitor():
-    log("🚀 MONITORAGGIO v15.7 (LINK FIX) AVVIATO...")
+    log("🚀 MONITORAGGIO v15.8 (LAYOUT FIX) AVVIATO...")
     while True:
         try:
             conn = mysql.connector.connect(**DB_CONFIG)
@@ -208,7 +208,7 @@ def run_price_monitor():
                         deal,
                         p['title'],
                         p['image_url'],
-                        p['asin']  # <--- NUOVO PARAMETRO FONDAMENTALE
+                        p['asin']
                     )
                     
                     if not post_exists:
