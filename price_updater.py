@@ -66,7 +66,7 @@ def get_amazon_data(asin):
 
 def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_title, image_url, asin):
     """
-    Aggiorna il post WP. Ricostruisce il link Amazon usando l'ASIN garantito.
+    Aggiorna il post WP. RICOSTRUISCE COMPLETAMENTE IL BOX per correggere layout rotti.
     """
     if not wp_post_id or wp_post_id == 0: return True
     headers = get_wp_headers()
@@ -97,43 +97,14 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_t
         status_text = deal_label if deal_label else (f"📉 Ribasso di € {abs(diff):.2f}" if diff < -0.01 else (f"📈 Rialzo di € {abs(diff):.2f}" if diff > 0.01 else "⚖️ Prezzo Stabile"))
         today = datetime.now().strftime('%d/%m/%Y')
         
-        # LINK AMAZON RICOSTRUITO
+        # LINK AMAZON RICOSTRUITO (Fondamentale per fixare i link rotti #)
         affiliate_url = f"https://www.amazon.it/dp/{asin}?tag={AMAZON_TAG}"
-        
-        # --- GENERAZIONE NUOVO BOX FLEXBOX ---
         clean_img = clean_amazon_image_url(image_url)
         
-        status_box_html = f'''
-        <div style="background: #6c757d1a; border-left: 5px solid #6c757d; padding: 10px 15px; margin: 10px 0; border-radius: 4px;">
-            <div style="font-weight: bold; color: #6c757d; text-transform: uppercase; font-size: 0.85rem;">Stato Offerta</div>
-            <div class="rd-status-val" style="font-size: 0.8rem; color: #555;">{status_text}</div>
-        </div>'''
+        # --- GENERAZIONE HTML NUOVO (STRUTTURA CORRETTA) ---
+        # Nota: Il </div> di chiusura della colonna destra è DOPO la data.
         
-        # --- STRATEGIA DI AGGIORNAMENTO ---
-        
-        # 1. C'è già il layout Flexbox (rd-price-box)?
-        if 'class="rd-price-box"' in content:
-            # SI: Aggiorna solo i valori interni
-            price_regex = r'(<div class="rd-price-box"[^>]*>)(.*?)(</div>)'
-            
-            # Aggiorna Prezzo
-            content = re.sub(price_regex, f'\\g<1>€ {new_str}\\g<3>', content)
-            
-            # Aggiorna/Inserisce Status Box
-            content = re.sub(r'<div[^>]*background:\s*#6c757d1a[^>]*>.*?Stato Offerta.*?</div>\s*</div>', '</div>', content, flags=re.DOTALL | re.IGNORECASE)
-            content = re.sub(price_regex, f'\\g<0>{status_box_html}', content, count=1)
-            
-            # AGGIORNA IL LINK (IMPORTANTE): Cerca il vecchio href nel pulsante arancione e lo sostituisce
-            content = re.sub(r'href="[^"]*amazon\.it[^"]*"', f'href="{affiliate_url}"', content)
-
-        else:
-            # NO: Layout Vecchio o Rotto -> SOSTITUZIONE TOTALE
-            log(f"      ⚠️ Layout Vecchio rilevato ID {wp_post_id}. Ricostruisco il box con link corretto.")
-            
-            old_layout_regex = r'<div style="text-align: center;">.*?Prezzo aggiornato al:.*?</div>'
-            
-            # HTML COMPLETO NUOVO (Corretto: Il bottone e la data sono DENTRO il div di destra)
-            new_html_block = f"""
+        new_html_block = f"""
 <div style="background-color: #fff; border: 1px solid #e1e1e1; padding: 20px; margin-bottom: 30px; border-radius: 8px; display: flex; flex-wrap: wrap; gap: 20px; align-items: center;">
     <div style="flex: 1; text-align: center; min-width: 200px;">
         <a href="{affiliate_url}" target="_blank" rel="nofollow noopener sponsored">
@@ -143,7 +114,10 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_t
     <div style="flex: 1.5; min-width: 250px;">
         <h2 style="margin-top: 0; font-size: 1.4rem;">{product_title}</h2>
         <div class="rd-price-box" style="font-size: 2rem; color: #b12704; font-weight: bold; margin: 10px 0;">€ {new_str}</div>
-        {status_box_html}
+        <div style="background: #6c757d1a; border-left: 5px solid #6c757d; padding: 10px 15px; margin: 10px 0; border-radius: 4px;">
+            <div style="font-weight: bold; color: #6c757d; text-transform: uppercase; font-size: 0.85rem;">Stato Offerta</div>
+            <div class="rd-status-val" style="font-size: 0.8rem; color: #555;">{status_text}</div>
+        </div>
         <a style="background-color: #ff9900; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;" href="{affiliate_url}" target="_blank" rel="nofollow noopener sponsored">
             👉 Vedi Offerta su Amazon
         </a>
@@ -151,12 +125,31 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_t
     </div>
 </div>
 """
-            if re.search(old_layout_regex, content, re.DOTALL):
-                content = re.sub(old_layout_regex, new_html_block, content, flags=re.DOTALL)
-            else:
-                content = new_html_block + content
 
-        # Aggiorna Data e Schema (Sempre)
+        # --- SOSTITUZIONE TOTALE (NUCLEAR OPTION) ---
+        # Regex che cattura TUTTO il blocco prezzo, sia esso rotto, vecchio o nuovo.
+        # Cerca dall'inizio del div con bordo grigio fino alla fine del paragrafo della data.
+        # Questo sovrascrive anche i layout rotti dove il bottone è "scappato" fuori dal div.
+        
+        # Pattern 1: Layout Flexbox (anche rotto)
+        flex_pattern = r'(<div style="background-color: #fff; border: 1px solid #e1e1e1;[^>]*>.*?Prezzo aggiornato al:.*?</p>(?:\s*</div>)?)'
+        
+        # Pattern 2: Layout Vecchio Centrato
+        old_pattern = r'<div style="text-align: center;">.*?Prezzo aggiornato al:.*?</div>'
+
+        if re.search(flex_pattern, content, re.DOTALL):
+            # Trovato blocco Flex (o i suoi resti), lo sostituiamo interamente con quello nuovo corretto
+            content = re.sub(flex_pattern, new_html_block, content, flags=re.DOTALL)
+            
+        elif re.search(old_pattern, content, re.DOTALL):
+            # Trovato blocco vecchio centrato, lo sostituiamo
+            content = re.sub(old_pattern, new_html_block, content, flags=re.DOTALL)
+            
+        else:
+            # Non trovato nulla (nuovo post o layout irriconoscibile), lo mettiamo in cima
+            content = new_html_block + content
+
+        # Aggiorna Data e Schema (Ridondanza di sicurezza)
         content = re.sub(r'(Prezzo aggiornato al:\s?)(.*?)(\s*</p>|</span>)', f'\\g<1>{today}\\g<3>', content, flags=re.IGNORECASE)
         content = re.sub(r'("price":\s?")([\d\.]+)(",)', f'\\g<1>{new_str}\\g<3>', content)
 
@@ -173,7 +166,7 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_t
                 except: pass
 
             if update_resp.status_code == 200:
-                log(f"      ✨ WP Aggiornato (ID: {wp_post_id}) -> € {new_str}")
+                log(f"      ✨ WP Aggiornato e Corretto (ID: {wp_post_id}) -> € {new_str}")
             else:
                 log(f"      ⚠️ Errore Update WP: {update_resp.status_code}")
         
@@ -184,7 +177,7 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_t
         return True
 
 def run_price_monitor():
-    log("🚀 MONITORAGGIO v15.8 (LAYOUT FIX) AVVIATO...")
+    log("🚀 MONITORAGGIO v15.9 (TOTAL REBUILD) AVVIATO...")
     while True:
         try:
             conn = mysql.connector.connect(**DB_CONFIG)
