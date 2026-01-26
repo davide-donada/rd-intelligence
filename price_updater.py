@@ -68,7 +68,7 @@ def get_amazon_data(asin):
 
 def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_title, image_url, asin):
     """
-    Aggiorna il post WP. RICOSTRUISCE COMPLETAMENTE IL BOX per correggere layout rotti.
+    Aggiorna il post WP. FIX LAYOUT: Rimuove i div di chiusura accumulati.
     """
     if not wp_post_id or wp_post_id == 0: return True
     headers = get_wp_headers()
@@ -99,13 +99,10 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_t
         status_text = deal_label if deal_label else (f"📉 Ribasso di € {abs(diff):.2f}" if diff < -0.01 else (f"📈 Rialzo di € {abs(diff):.2f}" if diff > 0.01 else "⚖️ Prezzo Stabile"))
         today = datetime.now().strftime('%d/%m/%Y')
         
-        # LINK AMAZON RICOSTRUITO (Fondamentale per fixare i link rotti #)
         affiliate_url = f"https://www.amazon.it/dp/{asin}?tag={AMAZON_TAG}"
         clean_img = clean_amazon_image_url(image_url)
         
-        # --- GENERAZIONE HTML NUOVO (STRUTTURA CORRETTA) ---
-        # Nota: Il </div> di chiusura della colonna destra è DOPO la data e il bottone.
-        
+        # --- GENERAZIONE HTML NUOVO (PULITO) ---
         new_html_block = f"""
 <div style="background-color: #fff; border: 1px solid #e1e1e1; padding: 20px; margin-bottom: 30px; border-radius: 8px; display: flex; flex-wrap: wrap; gap: 20px; align-items: center;">
     <div style="flex: 1; text-align: center; min-width: 200px;">
@@ -128,29 +125,30 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_t
 </div>
 """
 
-        # --- SOSTITUZIONE TOTALE (NUCLEAR OPTION) ---
-        # Regex che cattura TUTTO il blocco prezzo, sia esso rotto, vecchio o nuovo.
+        # --- REGEX ASPIRATUTTO (FIX LAYOUT) ---
+        # Questa regex cerca il box, la data, e poi "mangia" TUTTI i </div> successivi
+        # fino a trovare un nuovo tag o contenuto. Rimuove l'accumulo di div.
         
-        # Pattern 1: Layout Flexbox (anche rotto/parziale)
-        # Cerca dall'inizio del div border fino alla fine del paragrafo data
-        flex_pattern = r'(<div style="background-color: #fff; border: 1px solid #e1e1e1;[^>]*>.*?Prezzo aggiornato al:.*?</p>(?:\s*</div>)?)'
+        # Pattern 1: Layout Flexbox (con pulizia coda)
+        # (?:\s*</div>)+ significa: "uno o più div di chiusura, inclusi spazi"
+        flex_pattern = r'(<div style="background-color: #fff; border: 1px solid #e1e1e1;[^>]*>.*?Prezzo aggiornato al:.*?</p>(?:\s*</div>)+)'
         
-        # Pattern 2: Layout Vecchio Centrato
-        old_pattern = r'<div style="text-align: center;">.*?Prezzo aggiornato al:.*?</div>'
+        # Pattern 2: Layout Vecchio Centrato (con pulizia coda)
+        old_pattern = r'<div style="text-align: center;">.*?Prezzo aggiornato al:.*?</div>(?:\s*</div>)*'
 
         if re.search(flex_pattern, content, re.DOTALL):
-            # Trovato blocco Flex (o i suoi resti), lo sostituiamo interamente
+            # Sostituisce il blocco esistente + tutti i div extra con il blocco nuovo pulito
             content = re.sub(flex_pattern, new_html_block, content, flags=re.DOTALL)
             
         elif re.search(old_pattern, content, re.DOTALL):
-            # Trovato blocco vecchio centrato, lo sostituiamo
+            # Sostituisce il vecchio centrato
             content = re.sub(old_pattern, new_html_block, content, flags=re.DOTALL)
             
         else:
-            # Non trovato nulla, lo mettiamo in cima
+            # Se non trova nulla, inserisce in testa
             content = new_html_block + content
 
-        # Aggiorna Data e Schema (Ridondanza di sicurezza)
+        # Aggiorna Data e Schema (Ridondanza)
         content = re.sub(r'(Prezzo aggiornato al:\s?)(.*?)(\s*</p>|</span>)', f'\\g<1>{today}\\g<3>', content, flags=re.IGNORECASE)
         content = re.sub(r'("price":\s?")([\d\.]+)(",)', f'\\g<1>{new_str}\\g<3>', content)
 
@@ -178,12 +176,11 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_t
         return True
 
 def run_price_monitor():
-    log("🚀 MONITORAGGIO v16.0 (FINAL FIX) AVVIATO...")
+    log("🚀 MONITORAGGIO v16.1 (LAYOUT FIXER) AVVIATO...")
     while True:
         try:
             conn = mysql.connector.connect(**DB_CONFIG)
             cursor = conn.cursor(dictionary=True)
-            # Scarichiamo anche titolo e immagine per ricostruire il box se serve
             cursor.execute("SELECT id, asin, current_price, wp_post_id, title, image_url FROM products WHERE status = 'published' ORDER BY id DESC")
             products = cursor.fetchall()
             conn.close()
@@ -194,7 +191,6 @@ def run_price_monitor():
                 new_price, deal = get_amazon_data(p['asin'])
                 
                 if new_price:
-                    # Passiamo l'ASIN per ricostruire il link
                     post_exists = update_wp_post_price(
                         p['wp_post_id'], 
                         p['current_price'], 
