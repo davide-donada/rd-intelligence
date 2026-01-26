@@ -87,16 +87,11 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label):
         original_content = content
         
         # --- PULIZIA PROFONDA (DEEP CLEAN) ---
-        
-        # 1. Rimuove il vecchio blocco "PREZZO STANDARD" con bordo sinistro solido (quello dell'esempio buggato)
-        # Cerca un div che ha "border-left: 4px solid" e contiene "PREZZO STANDARD" o "Monitoraggio"
+        # 1. Rimuove il vecchio blocco "PREZZO STANDARD" con bordo sinistro solido
         content = re.sub(r'<div[^>]*border-left:\s*4px\s*solid[^>]*>.*?(PREZZO STANDARD|Monitoraggio).*?</div>', '', content, flags=re.DOTALL | re.IGNORECASE)
-
-        # 2. Rimuove eventuali prezzi "nudi" (non nel box nuovo) che potrebbero essere rimasti
-        # Cerca paragrafi con stile rosso tipico dei prezzi vecchi ma fuori dal box rd-price-box
+        # 2. Rimuove prezzi "nudi" rossi fuori posto
         content = re.sub(r'<p[^>]*color:\s*#b12704[^>]*>.*?</p>', '', content, flags=re.DOTALL | re.IGNORECASE)
-
-        # 3. Rimuove duplicati dei box "Stato Offerta" (sfondo grigio chiaro)
+        # 3. Rimuove duplicati box stato
         content = re.sub(r'<div[^>]*background:\s*#6c757d1a[^>]*>.*?Stato Offerta.*?</div>\s*(<div[^>]*>.*?</div>\s*)*</div>', '', content, flags=re.DOTALL | re.IGNORECASE)
         content = re.sub(r'<div[^>]*background:\s*#6c757d1a[^>]*>.*?Monitoraggio avviato.*?</div>', '', content, flags=re.DOTALL | re.IGNORECASE)
 
@@ -111,23 +106,17 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label):
 </div>'''
 
         # --- AGGIORNAMENTO FLEXBOX ---
-        # Cerchiamo il div specifico del nuovo layout
         price_regex = r'(<div class="rd-price-box"[^>]*>)(.*?)(</div>)' 
         
         if re.search(price_regex, content):
-            # Aggiorna il numero
             content = re.sub(price_regex, f'\\g<1>€ {new_str}\\g<3>', content)
-            # Inserisce il box stato SUBITO DOPO il prezzo
             content = re.sub(price_regex, f'\\g<0>{label_html}', content, count=1)
         else:
-            # Se NON trova il layout Flexbox (caso raro ormai), prova a salvare il salvabile
-            # Ma dato che stiamo pulendo aggressivamente, è meglio non fare fallback strani che creano doppi prezzi.
-            # Se non c'è il box rd-price-box, logghiamo un warning e non tocchiamo per evitare danni.
-            log(f"      ⚠️ Layout Flexbox non trovato per ID {wp_post_id}. Salto aggiornamento grafico per sicurezza.")
-            # Aggiorniamo solo i metadati JSON-LD e data in fondo
+            # Fallback legacy solo se necessario, ma con cautela
+            log(f"      ⚠️ Layout Flexbox non trovato per ID {wp_post_id}. Salto aggiornamento grafico.")
             pass
 
-        # Aggiorna Data e Schema (sempre)
+        # Aggiorna Data e Schema
         today = datetime.now().strftime('%d/%m/%Y')
         content = re.sub(r'(Prezzo aggiornato al:\s?)(.*?)(\s*</p>|</span>)', f'\\g<1>{today}\\g<3>', content, flags=re.IGNORECASE)
         content = re.sub(r'("price":\s?")([\d\.]+)(",)', f'\\g<1>{new_str}\\g<3>', content)
@@ -157,16 +146,19 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label):
         return True
 
 def run_price_monitor():
-    log("🚀 MONITORAGGIO v15.3 (DEEP CLEAN) AVVIATO...")
+    log("🚀 MONITORAGGIO v15.4 (ORDER BY NEWEST) AVVIATO...")
     while True:
         try:
             conn = mysql.connector.connect(**DB_CONFIG)
             cursor = conn.cursor(dictionary=True)
-            cursor.execute("SELECT id, asin, current_price, wp_post_id FROM products WHERE status = 'published'")
+            
+            # --- MODIFICA QUI: ORDER BY id DESC ---
+            # Questo assicura che il controllo inizi dai prodotti inseriti per ultimi (i più recenti)
+            cursor.execute("SELECT id, asin, current_price, wp_post_id FROM products WHERE status = 'published' ORDER BY id DESC")
             products = cursor.fetchall()
             conn.close()
             
-            log(f"📊 Scansione {len(products)} prodotti...")
+            log(f"📊 Scansione {len(products)} prodotti (dal più recente)...")
             
             for p in products:
                 new_price, deal = get_amazon_data(p['asin'])
