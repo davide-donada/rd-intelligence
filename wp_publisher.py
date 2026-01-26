@@ -43,6 +43,8 @@ def upload_image_to_wp(image_url, title):
         return wp_resp.json()['id'] if wp_resp.status_code == 201 else None
     except: return None
 
+# --- GENERATORI HTML COMPONENTI ---
+
 def generate_pros_cons_html(pros, cons):
     if not pros and not cons: return ""
     pros_html = "".join([f"<li style='margin-bottom:10px; list-style:none; padding-left:28px; position:relative; line-height:1.5;'><span style='position:absolute; left:0; top:0; color:#10b981; font-weight:bold;'>✓</span>{p}</li>" for p in pros])
@@ -63,15 +65,15 @@ def generate_pros_cons_html(pros, cons):
 def generate_scorecard_html(score, badge, sub_scores):
     # Definizione colori avanzati (Gradienti)
     if score >= 7.5:
-        primary_color = "#10b981" # Emerald Green
+        primary_color = "#10b981" 
         gradient = "linear-gradient(135deg, #10b981 0%, #34d399 100%)"
         shadow_color = "rgba(16, 185, 129, 0.4)"
     elif score >= 6:
-        primary_color = "#f59e0b" # Amber
+        primary_color = "#f59e0b"
         gradient = "linear-gradient(135deg, #f59e0b 0%, #fbbf24 100%)"
         shadow_color = "rgba(245, 158, 11, 0.4)"
     else:
-        primary_color = "#ef4444" # Red
+        primary_color = "#ef4444"
         gradient = "linear-gradient(135deg, #ef4444 0%, #f87171 100%)"
         shadow_color = "rgba(239, 68, 68, 0.4)"
 
@@ -90,7 +92,6 @@ def generate_scorecard_html(score, badge, sub_scores):
             </div>
         </div>"""
 
-    # Layout "Card" moderno con Flexbox
     return f"""
     <div style='background: #ffffff; border-radius: 16px; padding: 30px; margin: 40px 0; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.01); border: 1px solid #f3f4f6;'>
         <div style='display: flex; flex-wrap: wrap; align-items: center; gap: 30px;'>
@@ -121,13 +122,33 @@ def generate_scorecard_html(score, badge, sub_scores):
                     letter-spacing: 0.5px;
                 '>{badge}</div>
             </div>
-            
             <div style='flex: 1; min-width: 250px;'>
                 <h3 style='margin: 0 0 20px 0; font-size: 1.5rem; color: #111827; border-bottom: 2px solid #f3f4f6; padding-bottom: 10px;'>Verdetto Finale</h3>
                 {bars_html}
             </div>
         </div>
     </div>"""
+
+def generate_faq_html(faqs):
+    """Genera la sezione Domande Frequenti con layout Accordion."""
+    if not faqs: return ""
+    
+    html = '<div style="margin-top: 50px; margin-bottom: 30px;"><h2>Domande Frequenti</h2>'
+    
+    for f in faqs:
+        q = f.get('question', '')
+        a = f.get('answer', '')
+        # Layout richiesto esplicitamente
+        html += f'''
+<details class="rd-faq-details" style="margin-bottom: 15px; border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px 15px; background: #fff;">
+    <summary style="font-weight: bold; cursor: pointer; color: #1f2937; outline: none;">{q}</summary>
+    <div class="rd-faq-content" style="margin-top: 10px; color: #4b5563; line-height: 1.6; border-top: 1px solid #f3f4f6; padding-top: 10px;">{a}</div>
+</details>'''
+    
+    html += '</div>'
+    return html
+
+# --- ANALISI PREZZO ---
 
 def analyze_price_history(product_id, current_price):
     try:
@@ -138,26 +159,23 @@ def analyze_price_history(product_id, current_price):
         conn.close()
         prices = [float(r[0]) for r in rows] if rows else [float(current_price)]
         
-        # Logica semplificata per testo status
-        if len(prices) < 2: return "⚖️ Monitoraggio appena avviato", "#6c757d", ""
+        if len(prices) < 2: return "⚖️ Monitoraggio appena avviato"
         
-        avg = sum(prices) / len(prices)
         current = float(current_price)
-        if current <= min(prices): return "🔥 Minimo storico!", "#28a745", ""
-        return ("✅ Sotto la media", "#17a2b8", "") if current < avg else ("⚖️ Prezzo Stabile", "#6c757d", "")
-    except: return "⚖️ Monitoraggio avviato", "#6c757d", ""
+        if current <= min(prices): return "🔥 Minimo storico!"
+        avg = sum(prices) / len(prices)
+        return "✅ Sotto la media" if current < avg else "⚖️ Prezzo Stabile"
+    except: return "⚖️ Monitoraggio avviato"
+
+# --- ASSEMBLAGGIO ARTICOLO ---
 
 def format_article_html(product, local_image_url, ai_data):
     p_id, asin, title, price = product[0], product[1], product[2], product[3]
     aff_link = f"https://www.amazon.it/dp/{asin}?tag=recensionedigitale-21"
-    
-    # Analisi Prezzo: Recuperiamo il testo dello stato (es. "Monitoraggio appena avviato")
-    p_verdict, _, _ = analyze_price_history(p_id, price)
-    
+    p_verdict = analyze_price_history(p_id, price)
     today_str = datetime.now().strftime('%d/%m/%Y')
     
-    # --- NUOVO HEADER FLEXBOX (Identico al Price Updater v15.9) ---
-    # Nota: Il </div> finale chiude correttamente tutto il blocco di destra DOPO il bottone e la data.
+    # Header Flexbox (Identico al Price Updater v16.0)
     header = f"""
 <div style="background-color: #fff; border: 1px solid #e1e1e1; padding: 20px; margin-bottom: 30px; border-radius: 8px; display: flex; flex-wrap: wrap; gap: 20px; align-items: center;">
     <div style="flex: 1; text-align: center; min-width: 200px;">
@@ -183,9 +201,15 @@ def format_article_html(product, local_image_url, ai_data):
     body = ai_data.get('html_content', '')
     pros_cons = generate_pros_cons_html(ai_data.get('pros', []), ai_data.get('cons', []))
     scorecard = generate_scorecard_html(ai_data.get('final_score', 8.0), ai_data.get('verdict_badge', 'Consigliato'), ai_data.get('sub_scores', []))
-    video = f"<div style='margin-top:30px; border-radius:12px; overflow:hidden; box-shadow:0 10px 15px -3px rgba(0,0,0,0.1);'><iframe width='100%' height='450' src='https://www.youtube.com/embed/{ai_data.get('video_id', '')}' frameborder='0' allowfullscreen></iframe></div>" if ai_data.get('video_id') else ""
     
-    return header + body + pros_cons + scorecard + video
+    video = ""
+    if ai_data.get('video_id'):
+        video = f"<div style='margin-top:30px; border-radius:12px; overflow:hidden; box-shadow:0 10px 15px -3px rgba(0,0,0,0.1);'><iframe width='100%' height='450' src='https://www.youtube.com/embed/{ai_data.get('video_id')}' frameborder='0' allowfullscreen></iframe></div>"
+
+    # NUOVO: Sezione FAQ
+    faq_section = generate_faq_html(ai_data.get('faqs', []))
+    
+    return header + body + pros_cons + scorecard + video + faq_section
 
 def run_publisher():
     print("🔌 [WP] Avvio pubblicazione bozze...")
