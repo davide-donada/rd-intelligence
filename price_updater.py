@@ -64,9 +64,9 @@ def get_amazon_data(asin):
         return price_val, deal_type
     except: return None, None
 
-def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_title, image_url):
+def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_title, image_url, asin):
     """
-    Aggiorna il post WP. Se trova il layout vecchio, lo SOSTITUISCE completamente con quello nuovo Flexbox.
+    Aggiorna il post WP. Ricostruisce il link Amazon usando l'ASIN garantito.
     """
     if not wp_post_id or wp_post_id == 0: return True
     headers = get_wp_headers()
@@ -96,21 +96,13 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_t
         diff = new_price - float(old_price)
         status_text = deal_label if deal_label else (f"📉 Ribasso di € {abs(diff):.2f}" if diff < -0.01 else (f"📈 Rialzo di € {abs(diff):.2f}" if diff > 0.01 else "⚖️ Prezzo Stabile"))
         today = datetime.now().strftime('%d/%m/%Y')
-        affiliate_url = f"https://www.amazon.it/dp/{deal_label}?tag={AMAZON_TAG}" # Qui deal_label è usato impropriamente come placeholder, fixiamo sotto usando URL generico o passando ASIN. 
-        # NOTA: deal_label qui sopra è testo, non ASIN. Usiamo un URL generico di ricerca o il link esistente se possibile.
-        # Meglio rigenerare il link se abbiamo l'ASIN, ma qui non l'abbiamo passato. 
-        # Per semplicità, nel replace del blocco intero, useremo un link generico o cercheremo di estrarlo, 
-        # ma la strategia migliore è passare l'ASIN alla funzione.
         
-        # --- GENERAZIONE NUOVO BOX FLEXBOX (DA ZERO) ---
-        # Costruiamo il box HTML perfetto così come dovrebbe essere
-        # Nota: L'URL affiliato lo ricostruiamo nel loop principale e lo passiamo, 
-        # ma per ora usiamo un placeholder che verrà riempito dal regex o dai dati DB.
+        # LINK AMAZON RICOSTRUITO (FIX BUG LINK ROTTO)
+        affiliate_url = f"https://www.amazon.it/dp/{asin}?tag={AMAZON_TAG}"
         
-        # Pulizia URL Immagine
+        # --- GENERAZIONE NUOVO BOX FLEXBOX ---
         clean_img = clean_amazon_image_url(image_url)
         
-        # Box Status
         status_box_html = f'''
         <div style="background: #6c757d1a; border-left: 5px solid #6c757d; padding: 10px 15px; margin: 10px 0; border-radius: 4px;">
             <div style="font-weight: bold; color: #6c757d; text-transform: uppercase; font-size: 0.85rem;">Stato Offerta</div>
@@ -127,30 +119,24 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_t
             # Aggiorna Prezzo
             content = re.sub(price_regex, f'\\g<1>€ {new_str}\\g<3>', content)
             
-            # Aggiorna/Inserisce Status Box (lo rigeneriamo pulito)
-            # Rimuoviamo vecchi status box dentro o vicino al flexbox
+            # Aggiorna/Inserisce Status Box
             content = re.sub(r'<div[^>]*background:\s*#6c757d1a[^>]*>.*?Stato Offerta.*?</div>\s*</div>', '</div>', content, flags=re.DOTALL | re.IGNORECASE)
-            
-            # Inseriamo il nuovo status box
             content = re.sub(price_regex, f'\\g<0>{status_box_html}', content, count=1)
+            
+            # AGGIORNA IL LINK (IMPORTANTE): Cerca il vecchio href nel pulsante arancione e lo sostituisce
+            content = re.sub(r'href="[^"]*amazon\.it[^"]*"', f'href="{affiliate_url}"', content)
 
         else:
-            # NO: Trovato LAYOUT VECCHIO (quello centrato dell'esempio) o MISTO
-            log(f"      ⚠️ Layout Vecchio rilevato ID {wp_post_id}. Eseguo SOSTITUZIONE TOTALE.")
+            # NO: Layout Vecchio o Rotto -> SOSTITUZIONE TOTALE
+            log(f"      ⚠️ Layout Vecchio rilevato ID {wp_post_id}. Ricostruisco il box con link corretto.")
             
-            # Regex per trovare il blocco "Vecchio Stile Centrato" (quello che mi hai incollato)
-            # Cerca: <div style="text-align: center;"> ... immagine ... prezzo ... data ... </div>
             old_layout_regex = r'<div style="text-align: center;">.*?Prezzo aggiornato al:.*?</div>'
             
-            # Cerchiamo di recuperare il link affiliato esistente se possibile, altrimenti ne creiamo uno
-            existing_link = re.search(r'href="(https://www.amazon.it/dp/.*?)"', content)
-            final_link = existing_link.group(1) if existing_link else "#"
-
-            # Creiamo il NUOVO HTML COMPLETO
+            # HTML COMPLETO NUOVO (Con il link corretto garantito)
             new_html_block = f"""
 <div style="background-color: #fff; border: 1px solid #e1e1e1; padding: 20px; margin-bottom: 30px; border-radius: 8px; display: flex; flex-wrap: wrap; gap: 20px; align-items: center;">
     <div style="flex: 1; text-align: center; min-width: 200px;">
-        <a href="{final_link}" target="_blank" rel="nofollow noopener sponsored">
+        <a href="{affiliate_url}" target="_blank" rel="nofollow noopener sponsored">
             <img class="lazyload" style="max-height: 250px; width: auto; object-fit: contain;" src="{clean_img}" alt="{product_title}" />
         </a>
     </div>
@@ -158,19 +144,16 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_t
         <h2 style="margin-top: 0; font-size: 1.4rem;">{product_title}</h2>
         <div class="rd-price-box" style="font-size: 2rem; color: #b12704; font-weight: bold; margin: 10px 0;">€ {new_str}</div>
         {status_box_html}
-        <a style="background-color: #ff9900; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;" href="{final_link}" target="_blank" rel="nofollow noopener sponsored">
+        <a style="background-color: #ff9900; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;" href="{affiliate_url}" target="_blank" rel="nofollow noopener sponsored">
             👉 Vedi Offerta su Amazon
         </a>
         <p style="font-size: 0.8rem; color: #666; margin-top: 5px;">Prezzo aggiornato al: {today}</p>
     </div>
 </div>
 """
-            # SOSTITUZIONE DRACONIANA
             if re.search(old_layout_regex, content, re.DOTALL):
-                # Sostituisce il vecchio blocco centrato con il nuovo Flexbox
                 content = re.sub(old_layout_regex, new_html_block, content, flags=re.DOTALL)
             else:
-                # Fallback: se non trova il blocco esatto ma non c'è il flexbox, lo mette in cima
                 content = new_html_block + content
 
         # Aggiorna Data e Schema (Sempre)
@@ -201,12 +184,12 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_t
         return True
 
 def run_price_monitor():
-    log("🚀 MONITORAGGIO v15.6 (REPLACE LAYOUT) AVVIATO...")
+    log("🚀 MONITORAGGIO v15.7 (LINK FIX) AVVIATO...")
     while True:
         try:
             conn = mysql.connector.connect(**DB_CONFIG)
             cursor = conn.cursor(dictionary=True)
-            # SCARICHIAMO ANCHE TITOLO E IMMAGINE
+            # SCARICHIAMO TUTTI I DATI NECESSARI
             cursor.execute("SELECT id, asin, current_price, wp_post_id, title, image_url FROM products WHERE status = 'published' ORDER BY id DESC")
             products = cursor.fetchall()
             conn.close()
@@ -217,14 +200,15 @@ def run_price_monitor():
                 new_price, deal = get_amazon_data(p['asin'])
                 
                 if new_price:
-                    # Passiamo TUTTI i dati necessari per ricostruire il box se serve
+                    # Passiamo l'ASIN esplicitamente per ricostruire il link
                     post_exists = update_wp_post_price(
                         p['wp_post_id'], 
                         p['current_price'], 
                         new_price, 
                         deal,
-                        p['title'],      # Passiamo il Titolo
-                        p['image_url']   # Passiamo l'URL Immagine
+                        p['title'],
+                        p['image_url'],
+                        p['asin']  # <--- NUOVO PARAMETRO FONDAMENTALE
                     )
                     
                     if not post_exists:
