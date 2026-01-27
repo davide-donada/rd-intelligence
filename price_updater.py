@@ -194,4 +194,28 @@ def run_price_monitor():
                 new_price, deal = get_amazon_data(p['asin'])
                 
                 if new_price:
-                    post_
+                    post_exists = update_wp_post_price(p['wp_post_id'], p['current_price'], new_price, deal, p['title'], p['image_url'], p['asin'])
+                    if not post_exists: pass
+                    
+                    if abs(float(p['current_price']) - new_price) > 0.01:
+                        conn = mysql.connector.connect(**DB_CONFIG)
+                        cur = conn.cursor()
+                        cur.execute("UPDATE products SET current_price = %s WHERE id = %s", (new_price, p['id']))
+                        cur.execute("INSERT INTO price_history (product_id, price) VALUES (%s, %s)", (p['id'], new_price))
+                        conn.commit()
+                        conn.close()
+                        log(f"      💰 CAMBIO: {p['asin']} -> € {new_price}")
+                    else:
+                        log(f"   ⚖️  {p['asin']} Stabile")
+                
+                time.sleep(15)
+            
+            log(f"✅ Giro completato. Pausa 1 ora.")
+            time.sleep(3600)
+            
+        except Exception as e:
+            log(f"❌ Errore critico nel loop: {e}")
+            time.sleep(60)
+
+if __name__ == "__main__":
+    run_price_monitor()
