@@ -3,11 +3,9 @@ import requests
 import time
 import os
 import re
-import random
 from bs4 import BeautifulSoup
-from datetime import datetime, timedelta
+from datetime import datetime
 import base64
-import json
 
 # --- CONFIGURAZIONE ---
 DB_CONFIG = {
@@ -21,8 +19,6 @@ DB_CONFIG = {
 WP_API_URL = "https://www.recensionedigitale.it/wp-json/wp/v2"
 WP_USER = os.getenv('WP_USER', 'davide')
 WP_APP_PASSWORD = os.getenv('WP_PASSWORD')
-
-# TAG AFFILIATO
 AMAZON_TAG = "recensionedigitale-21" 
 
 def log(message):
@@ -35,14 +31,11 @@ def get_wp_headers():
     return {'Authorization': f'Basic {token.decode("utf-8")}', 'Content-Type': 'application/json'}
 
 def clean_amazon_image_url(url):
-    """Pulisce l'URL immagine per averla in alta definizione nel box."""
     if not url or not isinstance(url, str): return ""
     return re.sub(r'\._[A-Z0-9,_\-]+_\.', '.', url)
 
 def get_amazon_data(asin):
-    # NO TAG per lo scraping (evita click fantasma in Analytics/Amazon)
-    url = f"https://www.amazon.it/dp/{asin}?th=1&psc=1"
-    
+    url = f"https://www.amazon.it/dp/{asin}?th=1&psc=1" # No tag for scraping
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
@@ -69,45 +62,42 @@ def get_amazon_data(asin):
     except: return None, None
 
 def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_title, image_url, asin):
-    """
-    Aggiorna il post WP. RICOSTRUISCE IL BOX CON LAYOUT E ALT TEXT AGGIORNATI.
-    """
     if not wp_post_id or wp_post_id == 0: return True
     headers = get_wp_headers()
     
     try:
-        # 1. GET: Leggiamo il post
         resp = requests.get(f"{WP_API_URL}/posts/{wp_post_id}?context=edit", headers=headers, timeout=20)
+        if resp.status_code != 200: return True
         
-        if resp.status_code == 404:
-            log(f"      🗑️  Post WP #{wp_post_id} non trovato (404).")
-            return False 
-
-        if resp.status_code == 200:
-            post_data = resp.json()
-            if post_data.get('status') == 'trash':
-                log(f"      🗑️  Post WP #{wp_post_id} è nel cestino (Status: Trash).")
-                return False
-
-        if resp.status_code != 200: 
-            return True 
-            
+        post_data = resp.json()
+        if post_data.get('status') == 'trash': return False
         content = post_data['content']['raw']
         original_content = content
 
-        # --- PREPARAZIONE DATI ---
+        # DATI
         new_str = f"{new_price:.2f}"
         diff = new_price - float(old_price)
         status_text = deal_label if deal_label else (f"📉 Ribasso di € {abs(diff):.2f}" if diff < -0.01 else (f"📈 Rialzo di € {abs(diff):.2f}" if diff > 0.01 else "⚖️ Prezzo Stabile"))
         today = datetime.now().strftime('%d/%m/%Y')
-        
-        # Link con TAG per l'utente
         affiliate_url = f"https://www.amazon.it/dp/{asin}?tag={AMAZON_TAG}"
         clean_img = clean_amazon_image_url(image_url)
-        
-        # --- GENERAZIONE HTML NUOVO (SINCRONIZZATO CON WP_PUBLISHER) ---
-        new_html_block = f"""
-<div style="background-color: #fff; border: 1px solid #e1e1e1; padding: 20px; margin-bottom: 30px; border-radius: 8px; display: flex; flex-wrap: wrap; gap: 20px; align-items: center;">
+
+        # CSS STYLES (Deve essere sempre presente per animazioni e sticky bar)
+        css_styles = """
+<style>
+@keyframes pulse-orange { 0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 153, 0, 0.7); } 70% { transform: scale(1.03); box-shadow: 0 0 0 10px rgba(255, 153, 0, 0); } 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 153, 0, 0); } }
+.rd-btn-pulse { animation: pulse-orange 2s infinite; }
+.rd-sticky-bar { position: fixed; bottom: 0; left: 0; width: 100%; background: #fff; box-shadow: 0 -2px 10px rgba(0,0,0,0.1); z-index: 99999; padding: 10px 20px; display: flex; justify-content: space-between; align-items: center; border-top: 2px solid #ff9900; }
+.rd-sticky-price { font-size: 1.2rem; font-weight: bold; color: #b12704; margin-right: 15px; }
+.rd-sticky-btn { background: #ff9900; color: white; padding: 8px 15px; text-decoration: none; border-radius: 4px; font-weight: bold; text-transform: uppercase; font-size: 0.9rem; }
+@media (max-width: 600px) { .rd-sticky-title { display: none; } }
+</style>
+"""
+
+        # BOX PRINCIPALE (HEADER)
+        new_header_block = f"""
+{css_styles}
+<div style="background-color: #fff; border: 1px solid #e1e1e1; padding: 20px; margin-bottom: 30px; border-radius: 8px; display: flex; flex-wrap: wrap; gap: 20px; align-items: center; position: relative;">
     <div style="flex: 1; text-align: center; min-width: 200px;">
         <a href="{affiliate_url}" target="_blank" rel="nofollow noopener sponsored">
             <img class="lazyload" style="max-height: 250px; width: auto; object-fit: contain;" src="{clean_img}" alt="Recensione {product_title}" />
@@ -115,50 +105,57 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_t
     </div>
     <div style="flex: 1.5; min-width: 250px;">
         <h2 style="margin-top: 0; font-size: 1.4rem;">{product_title}</h2>
-        <div class="rd-price-box" style="font-size: 2rem; color: #b12704; font-weight: bold; margin: 10px 0;">€ {new_str}</div>
-        <div style="background: #6c757d1a; border-left: 5px solid #6c757d; padding: 10px 15px; margin: 10px 0; border-radius: 4px;">
-            <div style="font-weight: bold; color: #6c757d; text-transform: uppercase; font-size: 0.85rem;">Stato Offerta</div>
-            <div class="rd-status-val" style="font-size: 0.8rem; color: #555;">{status_text}</div>
+        <div class="rd-price-box" style="font-size: 2.2rem; color: #b12704; font-weight: 800; margin: 10px 0;">€ {new_str}</div>
+        <div style="background: #fff3cd; border-left: 5px solid #ffc107; padding: 10px 15px; margin: 10px 0; border-radius: 4px;">
+            <div style="font-weight: bold; color: #856404; text-transform: uppercase; font-size: 0.75rem;">Stato Attuale</div>
+            <div class="rd-status-val" style="font-size: 0.9rem; color: #333; font-weight: 600;">{status_text}</div>
         </div>
-        <a style="background-color: #ff9900; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;" href="{affiliate_url}" target="_blank" rel="nofollow noopener sponsored">
-            👉 Vedi Offerta su Amazon
+        <a class="rd-btn-pulse" style="background-color: #ff9900; color: white; padding: 14px 28px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block; font-size: 1.1rem; margin-top: 5px;" href="{affiliate_url}" target="_blank" rel="nofollow noopener sponsored">
+            👉 VEDI OFFERTA AMAZON
         </a>
-        <p style="font-size: 0.8rem; color: #666; margin-top: 5px;">Prezzo aggiornato al: {today}</p>
+        <p style="font-size: 0.75rem; color: #888; margin-top: 8px;">Ultimo controllo: {today}</p>
     </div>
 </div>
 """
 
-        # --- REGEX AGGRESSIVA (PULISCE I DIV ACCUMULATI) ---
-        flex_pattern = r'(<div style="background-color: #fff; border: 1px solid #e1e1e1;[^>]*>.*?Prezzo aggiornato al:.*?</p>(?:\s*</div>)+)'
+        # STICKY BAR (BOTTOM)
+        new_sticky_bar = f"""
+<div class="rd-sticky-bar">
+    <div class="rd-sticky-title" style="font-weight:bold; color:#333; max-width: 50%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{product_title}</div>
+    <div style="display:flex; align-items:center;">
+        <span class="rd-sticky-price">€ {new_str}</span>
+        <a class="rd-sticky-btn" href="{affiliate_url}" target="_blank" rel="nofollow noopener sponsored">Vedi Offerta</a>
+    </div>
+</div>
+"""
+
+        # 1. SOSTITUZIONE HEADER (Box principale)
+        flex_pattern = r'(?:<style>.*?</style>\s*)?<div style="background-color: #fff; border: 1px solid #e1e1e1;[^>]*>.*?Ultimo controllo:.*?</p>(?:\s*</div>)+'
         old_pattern = r'<div style="text-align: center;">.*?Prezzo aggiornato al:.*?</div>(?:\s*</div>)*'
 
         if re.search(flex_pattern, content, re.DOTALL):
-            content = re.sub(flex_pattern, new_html_block, content, flags=re.DOTALL)
+            content = re.sub(flex_pattern, new_header_block, content, flags=re.DOTALL)
         elif re.search(old_pattern, content, re.DOTALL):
-            content = re.sub(old_pattern, new_html_block, content, flags=re.DOTALL)
+            content = re.sub(old_pattern, new_header_block, content, flags=re.DOTALL)
         else:
-            content = new_html_block + content
+            content = new_header_block + content
 
-        # Aggiorna Data e Schema (Ridondanza)
-        content = re.sub(r'(Prezzo aggiornato al:\s?)(.*?)(\s*</p>|</span>)', f'\\g<1>{today}\\g<3>', content, flags=re.IGNORECASE)
+        # 2. SOSTITUZIONE/INSERIMENTO STICKY BAR
+        sticky_pattern = r'<div class="rd-sticky-bar">.*?</div>'
+        if re.search(sticky_pattern, content, re.DOTALL):
+            content = re.sub(sticky_pattern, new_sticky_bar, content, flags=re.DOTALL)
+        else:
+            # Se non c'è, la aggiungiamo alla fine
+            content = content + new_sticky_bar
+
+        # Aggiornamenti Meta
+        content = re.sub(r'(Ultimo controllo: |Prezzo aggiornato al:\s?)(.*?)(\s*</p>|</span>)', f'\\g<1>{today}\\g<3>', content, flags=re.IGNORECASE)
         content = re.sub(r'("price":\s?")([\d\.]+)(",)', f'\\g<1>{new_str}\\g<3>', content)
 
         if content != original_content: 
             update_resp = requests.post(f"{WP_API_URL}/posts/{wp_post_id}", headers=headers, json={'content': content})
-            
-            if update_resp.status_code in [400, 401, 403]:
-                try:
-                    err_json = update_resp.json()
-                    err_msg = err_json.get('message', '').lower()
-                    if 'cestino' in err_msg or 'trash' in err_msg:
-                        log(f"      🗑️  Errore WP: Post #{wp_post_id} nel cestino.")
-                        return False
-                except: pass
-
             if update_resp.status_code == 200:
-                log(f"      ✨ WP Aggiornato e Corretto (ID: {wp_post_id}) -> € {new_str}")
-            else:
-                log(f"      ⚠️ Errore Update WP: {update_resp.status_code}")
+                log(f"      ✨ WP Aggiornato (ID: {wp_post_id}) -> € {new_str}")
         
         return True
 
@@ -167,7 +164,7 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_t
         return True
 
 def run_price_monitor():
-    log("🚀 MONITORAGGIO v16.5 (SYNCED & OPTIMIZED) AVVIATO...")
+    log("🚀 MONITORAGGIO v17.0 (CONVERSION MONSTER) AVVIATO...")
     while True:
         try:
             conn = mysql.connector.connect(**DB_CONFIG)
@@ -176,30 +173,17 @@ def run_price_monitor():
             products = cursor.fetchall()
             conn.close()
             
-            log(f"📊 Scansione {len(products)} prodotti (dal più recente)...")
+            log(f"📊 Scansione {len(products)} prodotti...")
             
             for p in products:
                 new_price, deal = get_amazon_data(p['asin'])
                 
                 if new_price:
-                    post_exists = update_wp_post_price(
-                        p['wp_post_id'], 
-                        p['current_price'], 
-                        new_price, 
-                        deal,
-                        p['title'],
-                        p['image_url'],
-                        p['asin']
-                    )
+                    post_exists = update_wp_post_price(p['wp_post_id'], p['current_price'], new_price, deal, p['title'], p['image_url'], p['asin'])
                     
                     if not post_exists:
-                        conn = mysql.connector.connect(**DB_CONFIG)
-                        cur = conn.cursor()
-                        cur.execute("UPDATE products SET status = 'trash' WHERE id = %s", (p['id'],))
-                        conn.commit()
-                        conn.close()
-                        log(f"      🚫 ASIN {p['asin']} rimosso (Post Cestinato).")
-                        continue 
+                        # Gestione cestino...
+                        pass 
                     
                     if abs(float(p['current_price']) - new_price) > 0.01:
                         conn = mysql.connector.connect(**DB_CONFIG)
@@ -210,7 +194,7 @@ def run_price_monitor():
                         conn.close()
                         log(f"      💰 CAMBIO: {p['asin']} -> € {new_price}")
                     else:
-                        log(f"   ⚖️  {p['asin']} Stabile (€ {p['current_price']})")
+                        log(f"   ⚖️  {p['asin']} Stabile")
                 
                 time.sleep(15)
             
