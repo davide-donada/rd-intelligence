@@ -22,7 +22,7 @@ WP_API_URL = "https://www.recensionedigitale.it/wp-json/wp/v2"
 WP_USER = os.getenv('WP_USER', 'davide')
 WP_APP_PASSWORD = os.getenv('WP_PASSWORD')
 
-# TAG AFFILIATO CORRETTO
+# TAG AFFILIATO
 AMAZON_TAG = "recensionedigitale-21" 
 
 def log(message):
@@ -40,7 +40,10 @@ def clean_amazon_image_url(url):
     return re.sub(r'\._[A-Z0-9,_\-]+_\.', '.', url)
 
 def get_amazon_data(asin):
-    url = f"https://www.amazon.it/dp/{asin}?tag={AMAZON_TAG}&th=1&psc=1"
+    # --- FIX IMPORTANTE: RIMOSSO IL TAG AFFILIATO DALLO SCRAPING ---
+    # Usiamo un URL pulito per controllare il prezzo, così non falsiamo le statistiche Amazon.
+    url = f"https://www.amazon.it/dp/{asin}?th=1&psc=1"
+    
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
@@ -68,7 +71,7 @@ def get_amazon_data(asin):
 
 def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_title, image_url, asin):
     """
-    Aggiorna il post WP. FIX LAYOUT: Rimuove i div di chiusura accumulati.
+    Aggiorna il post WP. RICOSTRUISCE COMPLETAMENTE IL BOX per correggere layout rotti.
     """
     if not wp_post_id or wp_post_id == 0: return True
     headers = get_wp_headers()
@@ -99,6 +102,7 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_t
         status_text = deal_label if deal_label else (f"📉 Ribasso di € {abs(diff):.2f}" if diff < -0.01 else (f"📈 Rialzo di € {abs(diff):.2f}" if diff > 0.01 else "⚖️ Prezzo Stabile"))
         today = datetime.now().strftime('%d/%m/%Y')
         
+        # QUI invece usiamo il TAG AFFILIATO perché è il link che clicca l'utente
         affiliate_url = f"https://www.amazon.it/dp/{asin}?tag={AMAZON_TAG}"
         clean_img = clean_amazon_image_url(image_url)
         
@@ -126,29 +130,16 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_t
 """
 
         # --- REGEX ASPIRATUTTO (FIX LAYOUT) ---
-        # Questa regex cerca il box, la data, e poi "mangia" TUTTI i </div> successivi
-        # fino a trovare un nuovo tag o contenuto. Rimuove l'accumulo di div.
-        
-        # Pattern 1: Layout Flexbox (con pulizia coda)
-        # (?:\s*</div>)+ significa: "uno o più div di chiusura, inclusi spazi"
         flex_pattern = r'(<div style="background-color: #fff; border: 1px solid #e1e1e1;[^>]*>.*?Prezzo aggiornato al:.*?</p>(?:\s*</div>)+)'
-        
-        # Pattern 2: Layout Vecchio Centrato (con pulizia coda)
         old_pattern = r'<div style="text-align: center;">.*?Prezzo aggiornato al:.*?</div>(?:\s*</div>)*'
 
         if re.search(flex_pattern, content, re.DOTALL):
-            # Sostituisce il blocco esistente + tutti i div extra con il blocco nuovo pulito
             content = re.sub(flex_pattern, new_html_block, content, flags=re.DOTALL)
-            
         elif re.search(old_pattern, content, re.DOTALL):
-            # Sostituisce il vecchio centrato
             content = re.sub(old_pattern, new_html_block, content, flags=re.DOTALL)
-            
         else:
-            # Se non trova nulla, inserisce in testa
             content = new_html_block + content
 
-        # Aggiorna Data e Schema (Ridondanza)
         content = re.sub(r'(Prezzo aggiornato al:\s?)(.*?)(\s*</p>|</span>)', f'\\g<1>{today}\\g<3>', content, flags=re.IGNORECASE)
         content = re.sub(r'("price":\s?")([\d\.]+)(",)', f'\\g<1>{new_str}\\g<3>', content)
 
@@ -176,7 +167,7 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_t
         return True
 
 def run_price_monitor():
-    log("🚀 MONITORAGGIO v16.1 (LAYOUT FIXER) AVVIATO...")
+    log("🚀 MONITORAGGIO v16.4 (NO SELF-CLICK) AVVIATO...")
     while True:
         try:
             conn = mysql.connector.connect(**DB_CONFIG)
