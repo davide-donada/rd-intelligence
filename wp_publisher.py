@@ -169,11 +169,12 @@ def format_article_html(product, local_image_url, ai_data):
     p_verdict = analyze_price_history(p_id, price)
     today_str = datetime.now().strftime('%d/%m/%Y')
     
+    # 1. HEADER (Con Alt Text SEO)
     header = f"""
 <div style="background-color: #fff; border: 1px solid #e1e1e1; padding: 20px; margin-bottom: 30px; border-radius: 8px; display: flex; flex-wrap: wrap; gap: 20px; align-items: center;">
     <div style="flex: 1; text-align: center; min-width: 200px;">
         <a href="{aff_link}" target="_blank" rel="nofollow noopener sponsored">
-            <img class="lazyload" style="max-height: 250px; width: auto; object-fit: contain;" src="{clean_amazon_image_url(local_image_url)}" alt="{title}" />
+            <img class="lazyload" style="max-height: 250px; width: auto; object-fit: contain;" src="{clean_amazon_image_url(local_image_url)}" alt="Recensione {title}" />
         </a>
     </div>
     <div style="flex: 1.5; min-width: 250px;">
@@ -200,10 +201,28 @@ def format_article_html(product, local_image_url, ai_data):
         video = f"<div style='margin-top:30px; border-radius:12px; overflow:hidden; box-shadow:0 10px 15px -3px rgba(0,0,0,0.1);'><iframe width='100%' height='450' src='https://www.youtube.com/embed/{ai_data.get('video_id')}' frameborder='0' allowfullscreen></iframe></div>"
 
     faq_section = generate_faq_html(ai_data.get('faqs', []))
-    
-    full_html = header + body + pros_cons + scorecard + video + faq_section
 
-    # SCHEMA.ORG AGGIORNATO: "name": "Redazione"
+    # 2. BOTTOM CTA (Conversion Booster)
+    bottom_cta = f"""
+    <div style="text-align: center; margin: 40px 0; padding: 20px; background: #f9fafb; border-radius: 8px; border: 1px dashed #d1d5db;">
+        <h3 style="margin-top: 0; color: #374151;">Ti interessa questo prodotto?</h3>
+        <p style="margin-bottom: 20px; color: #6b7280;">Controlla la disponibilità e il prezzo attuale su Amazon.</p>
+        <a style="background-color: #ff9900; color: white; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 1.1rem; display: inline-block; box-shadow: 0 4px 6px rgba(0,0,0,0.1);" href="{aff_link}" target="_blank" rel="nofollow noopener sponsored">
+            🛒 Vedi Offerta Completa
+        </a>
+    </div>
+    """
+
+    # 3. DISCLAIMER (Amazon Compliance)
+    disclaimer = """
+    <p style="font-size: 0.75rem; color: #9ca3af; margin-top: 50px; text-align: center; border-top: 1px solid #e5e7eb; padding-top: 20px;">
+        <em>In qualità di Affiliato Amazon, RecensioneDigitale.it riceve un guadagno dagli acquisti idonei. I prezzi e la disponibilità sono soggetti a variazioni.</em>
+    </p>
+    """
+
+    full_html = header + body + pros_cons + scorecard + video + faq_section + bottom_cta + disclaimer
+
+    # SCHEMA.ORG
     schema_p = {
         "@context": "https://schema.org/",
         "@type": "Product",
@@ -214,7 +233,7 @@ def format_article_html(product, local_image_url, ai_data):
         "review": {
             "@type": "Review",
             "reviewRating": {"@type": "Rating", "ratingValue": str(ai_data.get('final_score', 8.0)), "bestRating": "10", "worstRating": "0"},
-            "author": {"@type": "Person", "name": "Redazione"} # CORRETTO QUI
+            "author": {"@type": "Person", "name": "Redazione"}
         }
     }
     full_html += f'\n<script type="application/ld+json">{json.dumps(schema_p)}</script>'
@@ -238,13 +257,12 @@ def run_publisher():
                     local_url = resp_media.json().get('source_url', p[4])
                 except: pass
             
-            # Qui chiamiamo la funzione che abbiamo appena fixato
-            full_html, _ = format_article_html(p, local_url, ai_data) # Nota: ho separato la logica per pulizia
+            full_html, _ = format_article_html(p, local_url, ai_data)
             
             post_data = {
                 'title': f"Recensione: {p[2]}",
                 'content': full_html,
-                'status': 'draft', # O 'publish' se vuoi pubblicare subito
+                'status': 'draft',
                 'categories': [int(p[6]) if p[6] else 1],
                 'featured_media': media_id,
                 'excerpt': p[7]

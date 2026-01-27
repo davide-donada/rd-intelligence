@@ -40,8 +40,7 @@ def clean_amazon_image_url(url):
     return re.sub(r'\._[A-Z0-9,_\-]+_\.', '.', url)
 
 def get_amazon_data(asin):
-    # --- FIX IMPORTANTE: RIMOSSO IL TAG AFFILIATO DALLO SCRAPING ---
-    # Usiamo un URL pulito per controllare il prezzo, così non falsiamo le statistiche Amazon.
+    # NO TAG per lo scraping (evita click fantasma in Analytics/Amazon)
     url = f"https://www.amazon.it/dp/{asin}?th=1&psc=1"
     
     headers = {
@@ -71,7 +70,7 @@ def get_amazon_data(asin):
 
 def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_title, image_url, asin):
     """
-    Aggiorna il post WP. RICOSTRUISCE COMPLETAMENTE IL BOX per correggere layout rotti.
+    Aggiorna il post WP. RICOSTRUISCE IL BOX CON LAYOUT E ALT TEXT AGGIORNATI.
     """
     if not wp_post_id or wp_post_id == 0: return True
     headers = get_wp_headers()
@@ -102,16 +101,16 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_t
         status_text = deal_label if deal_label else (f"📉 Ribasso di € {abs(diff):.2f}" if diff < -0.01 else (f"📈 Rialzo di € {abs(diff):.2f}" if diff > 0.01 else "⚖️ Prezzo Stabile"))
         today = datetime.now().strftime('%d/%m/%Y')
         
-        # QUI invece usiamo il TAG AFFILIATO perché è il link che clicca l'utente
+        # Link con TAG per l'utente
         affiliate_url = f"https://www.amazon.it/dp/{asin}?tag={AMAZON_TAG}"
         clean_img = clean_amazon_image_url(image_url)
         
-        # --- GENERAZIONE HTML NUOVO (PULITO) ---
+        # --- GENERAZIONE HTML NUOVO (SINCRONIZZATO CON WP_PUBLISHER) ---
         new_html_block = f"""
 <div style="background-color: #fff; border: 1px solid #e1e1e1; padding: 20px; margin-bottom: 30px; border-radius: 8px; display: flex; flex-wrap: wrap; gap: 20px; align-items: center;">
     <div style="flex: 1; text-align: center; min-width: 200px;">
         <a href="{affiliate_url}" target="_blank" rel="nofollow noopener sponsored">
-            <img class="lazyload" style="max-height: 250px; width: auto; object-fit: contain;" src="{clean_img}" alt="{product_title}" />
+            <img class="lazyload" style="max-height: 250px; width: auto; object-fit: contain;" src="{clean_img}" alt="Recensione {product_title}" />
         </a>
     </div>
     <div style="flex: 1.5; min-width: 250px;">
@@ -129,7 +128,7 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_t
 </div>
 """
 
-        # --- REGEX ASPIRATUTTO (FIX LAYOUT) ---
+        # --- REGEX AGGRESSIVA (PULISCE I DIV ACCUMULATI) ---
         flex_pattern = r'(<div style="background-color: #fff; border: 1px solid #e1e1e1;[^>]*>.*?Prezzo aggiornato al:.*?</p>(?:\s*</div>)+)'
         old_pattern = r'<div style="text-align: center;">.*?Prezzo aggiornato al:.*?</div>(?:\s*</div>)*'
 
@@ -140,6 +139,7 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_t
         else:
             content = new_html_block + content
 
+        # Aggiorna Data e Schema (Ridondanza)
         content = re.sub(r'(Prezzo aggiornato al:\s?)(.*?)(\s*</p>|</span>)', f'\\g<1>{today}\\g<3>', content, flags=re.IGNORECASE)
         content = re.sub(r'("price":\s?")([\d\.]+)(",)', f'\\g<1>{new_str}\\g<3>', content)
 
@@ -167,7 +167,7 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_t
         return True
 
 def run_price_monitor():
-    log("🚀 MONITORAGGIO v16.4 (NO SELF-CLICK) AVVIATO...")
+    log("🚀 MONITORAGGIO v16.5 (SYNCED & OPTIMIZED) AVVIATO...")
     while True:
         try:
             conn = mysql.connector.connect(**DB_CONFIG)
