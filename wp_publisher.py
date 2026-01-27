@@ -128,7 +128,7 @@ def analyze_price_history(product_id, current_price):
         return "✅ Prezzo Ottimo" if current < (sum(prices)/len(prices)) else "⚖️ Prezzo Stabile"
     except: return "⚖️ Monitoraggio avviato"
 
-# --- MAIN FORMATTER (AGGIUNTE AGGRESSIVE) ---
+# --- MAIN FORMATTER (INLINE CSS & JS FIX) ---
 
 def format_article_html(product, local_image_url, ai_data):
     p_id, asin, title, price = product[0], product[1], product[2], product[3]
@@ -136,25 +136,29 @@ def format_article_html(product, local_image_url, ai_data):
     p_verdict = analyze_price_history(p_id, price)
     today_str = datetime.now().strftime('%d/%m/%Y')
     
-    # CSS INLINE PER ANIMAZIONI E STICKY BAR
-    css_styles = """
+    # PULSE CSS (L'unico che deve restare nel tag style, ma gli diamo !important)
+    # JS SPOSTAMENTO: Questo è il trucco. Sposta la barra nel BODY, fuori dall'articolo.
+    extra_code = """
 <style>
 @keyframes pulse-orange { 0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 153, 0, 0.7); } 70% { transform: scale(1.03); box-shadow: 0 0 0 10px rgba(255, 153, 0, 0); } 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 153, 0, 0); } }
 .rd-btn-pulse { animation: pulse-orange 2s infinite; }
-.rd-sticky-bar { position: fixed; bottom: 0; left: 0; width: 100%; background: #fff; box-shadow: 0 -2px 10px rgba(0,0,0,0.1); z-index: 99999; padding: 10px 20px; display: flex; justify-content: space-between; align-items: center; border-top: 2px solid #ff9900; }
-.rd-sticky-price { font-size: 1.2rem; font-weight: bold; color: #b12704; margin-right: 15px; }
-.rd-sticky-btn { background: #ff9900; color: white; padding: 8px 15px; text-decoration: none; border-radius: 4px; font-weight: bold; text-transform: uppercase; font-size: 0.9rem; }
-@media (max-width: 600px) { .rd-sticky-title { display: none; } }
+@media (max-width: 600px) { .rd-sticky-title { display: none !important; } }
 </style>
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+    var stickyBar = document.getElementById("rd-sticky-bar-container");
+    if (stickyBar) { document.body.appendChild(stickyBar); }
+});
+</script>
 """
 
-    # HEADER CON "PULSE" E BADGE OPZIONALE
+    # HEADER
     badge_html = ""
     if ai_data.get('final_score', 0) >= 8.5:
         badge_html = '<div style="position: absolute; top: -10px; right: -10px; background: #ffd700; color: #000; font-weight: bold; padding: 5px 10px; border-radius: 4px; box-shadow: 0 2px 5px rgba(0,0,0,0.2); font-size: 0.8rem; z-index: 10;">🏆 SCELTA TOP</div>'
 
     header = f"""
-{css_styles}
+{extra_code}
 <div style="background-color: #fff; border: 1px solid #e1e1e1; padding: 20px; margin-bottom: 30px; border-radius: 8px; display: flex; flex-wrap: wrap; gap: 20px; align-items: center; position: relative;">
     {badge_html}
     <div style="flex: 1; text-align: center; min-width: 200px;">
@@ -169,7 +173,7 @@ def format_article_html(product, local_image_url, ai_data):
             <div style="font-weight: bold; color: #856404; text-transform: uppercase; font-size: 0.75rem;">Stato Attuale</div>
             <div class="rd-status-val" style="font-size: 0.9rem; color: #333; font-weight: 600;">{p_verdict}</div>
         </div>
-        <a class="rd-btn-pulse" style="background-color: #ff9900; color: white; padding: 14px 28px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block; font-size: 1.1rem; margin-top: 5px;" href="{aff_link}" target="_blank" rel="nofollow noopener sponsored">
+        <a class="rd-btn-pulse" style="background-color: #ff9900 !important; color: #ffffff !important; padding: 14px 28px; text-decoration: none !important; border-radius: 6px; font-weight: bold; display: inline-block; font-size: 1.1rem; margin-top: 5px;" href="{aff_link}" target="_blank" rel="nofollow noopener sponsored">
             👉 VEDI OFFERTA AMAZON
         </a>
         <p style="font-size: 0.75rem; color: #888; margin-top: 8px;">Ultimo controllo: {today_str}</p>
@@ -187,20 +191,18 @@ def format_article_html(product, local_image_url, ai_data):
 
     faq = generate_faq_html(ai_data.get('faqs', []))
 
-    # STICKY BAR (Il mostro della conversione)
+    # STICKY BAR ANTIPROIETTILE (Tutto Inline + !important)
     sticky_bar = f"""
-    <div class="rd-sticky-bar">
-        <div class="rd-sticky-title" style="font-weight:bold; color:#333; max-width: 50%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{title}</div>
-        <div style="display:flex; align-items:center;">
-            <span class="rd-sticky-price">€ {price}</span>
-            <a class="rd-sticky-btn" href="{aff_link}" target="_blank" rel="nofollow noopener sponsored">Vedi Offerta</a>
+    <div id="rd-sticky-bar-container" style="position: fixed !important; bottom: 0 !important; left: 0 !important; width: 100% !important; background: #ffffff !important; box-shadow: 0 -2px 10px rgba(0,0,0,0.1) !important; z-index: 2147483647 !important; padding: 10px 20px !important; display: flex !important; justify-content: space-between !important; align-items: center !important; border-top: 3px solid #ff9900 !important; margin: 0 !important; box-sizing: border-box !important;">
+        <div class="rd-sticky-title" style="font-weight:bold !important; color:#333 !important; max-width: 50% !important; white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; font-family: sans-serif !important; font-size: 1rem !important; margin: 0 !important;">{title}</div>
+        <div style="display:flex !important; align-items:center !important; margin: 0 !important;">
+            <span class="rd-sticky-price" style="font-size: 1.2rem !important; font-weight: bold !important; color: #b12704 !important; margin-right: 15px !important;">€ {price}</span>
+            <a href="{aff_link}" target="_blank" rel="nofollow noopener sponsored" style="background: #ff9900 !important; color: #ffffff !important; padding: 10px 20px !important; text-decoration: none !important; border-radius: 4px !important; font-weight: bold !important; text-transform: uppercase !important; font-size: 0.9rem !important; border: none !important; box-shadow: none !important;">Vedi Offerta</a>
         </div>
     </div>
     """
 
     disclaimer = """<p style="font-size:0.7rem; color:#999; margin-top:50px; text-align:center; border-top:1px solid #eee; padding-top:15px;"><em>In qualità di Affiliato Amazon, riceviamo un guadagno dagli acquisti idonei.</em></p>"""
-
-    # BOTTOM CTA (Opzionale se c'è la sticky bar, ma male non fa)
     
     full_html = header + body + pros_cons + scorecard + video + faq + disclaimer + sticky_bar
     
