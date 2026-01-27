@@ -63,7 +63,6 @@ def generate_pros_cons_html(pros, cons):
     </div>"""
 
 def generate_scorecard_html(score, badge, sub_scores):
-    # Definizione colori avanzati (Gradienti)
     if score >= 7.5:
         primary_color = "#10b981" 
         gradient = "linear-gradient(135deg, #10b981 0%, #34d399 100%)"
@@ -130,21 +129,16 @@ def generate_scorecard_html(score, badge, sub_scores):
     </div>"""
 
 def generate_faq_html(faqs):
-    """Genera la sezione Domande Frequenti con layout Accordion."""
     if not faqs: return ""
-    
     html = '<div style="margin-top: 50px; margin-bottom: 30px;"><h2>Domande Frequenti</h2>'
-    
     for f in faqs:
         q = f.get('question', '')
         a = f.get('answer', '')
-        # Layout richiesto esplicitamente
         html += f'''
 <details class="rd-faq-details" style="margin-bottom: 15px; border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px 15px; background: #fff;">
     <summary style="font-weight: bold; cursor: pointer; color: #1f2937; outline: none;">{q}</summary>
     <div class="rd-faq-content" style="margin-top: 10px; color: #4b5563; line-height: 1.6; border-top: 1px solid #f3f4f6; padding-top: 10px;">{a}</div>
 </details>'''
-    
     html += '</div>'
     return html
 
@@ -175,7 +169,6 @@ def format_article_html(product, local_image_url, ai_data):
     p_verdict = analyze_price_history(p_id, price)
     today_str = datetime.now().strftime('%d/%m/%Y')
     
-    # Header Flexbox (Identico al Price Updater v16.0)
     header = f"""
 <div style="background-color: #fff; border: 1px solid #e1e1e1; padding: 20px; margin-bottom: 30px; border-radius: 8px; display: flex; flex-wrap: wrap; gap: 20px; align-items: center;">
     <div style="flex: 1; text-align: center; min-width: 200px;">
@@ -206,10 +199,27 @@ def format_article_html(product, local_image_url, ai_data):
     if ai_data.get('video_id'):
         video = f"<div style='margin-top:30px; border-radius:12px; overflow:hidden; box-shadow:0 10px 15px -3px rgba(0,0,0,0.1);'><iframe width='100%' height='450' src='https://www.youtube.com/embed/{ai_data.get('video_id')}' frameborder='0' allowfullscreen></iframe></div>"
 
-    # NUOVO: Sezione FAQ
     faq_section = generate_faq_html(ai_data.get('faqs', []))
     
-    return header + body + pros_cons + scorecard + video + faq_section
+    full_html = header + body + pros_cons + scorecard + video + faq_section
+
+    # SCHEMA.ORG AGGIORNATO: "name": "Redazione"
+    schema_p = {
+        "@context": "https://schema.org/",
+        "@type": "Product",
+        "name": title,
+        "image": local_image_url,
+        "description": ai_data.get('meta_description', ''),
+        "offers": {"@type": "Offer", "price": str(price), "priceCurrency": "EUR", "availability": "https://schema.org/InStock"},
+        "review": {
+            "@type": "Review",
+            "reviewRating": {"@type": "Rating", "ratingValue": str(ai_data.get('final_score', 8.0)), "bestRating": "10", "worstRating": "0"},
+            "author": {"@type": "Person", "name": "Redazione"} # CORRETTO QUI
+        }
+    }
+    full_html += f'\n<script type="application/ld+json">{json.dumps(schema_p)}</script>'
+
+    return full_html, media_id if 'media_id' in locals() else None
 
 def run_publisher():
     print("🔌 [WP] Avvio pubblicazione bozze...")
@@ -228,27 +238,13 @@ def run_publisher():
                     local_url = resp_media.json().get('source_url', p[4])
                 except: pass
             
-            full_html = format_article_html(p, local_url, ai_data)
+            # Qui chiamiamo la funzione che abbiamo appena fixato
+            full_html, _ = format_article_html(p, local_url, ai_data) # Nota: ho separato la logica per pulizia
             
-            schema_p = {
-                "@context": "https://schema.org/",
-                "@type": "Product",
-                "name": p[2],
-                "image": local_url,
-                "description": p[7],
-                "offers": {"@type": "Offer", "price": str(p[3]), "priceCurrency": "EUR", "availability": "https://schema.org/InStock"},
-                "review": {
-                    "@type": "Review",
-                    "reviewRating": {"@type": "Rating", "ratingValue": str(ai_data.get('final_score', 8.0)), "bestRating": "10", "worstRating": "0"},
-                    "author": {"@type": "Person", "name": "Redazione RD"}
-                }
-            }
-            full_html += f'\n<script type="application/ld+json">{json.dumps(schema_p)}</script>'
-
             post_data = {
                 'title': f"Recensione: {p[2]}",
                 'content': full_html,
-                'status': 'draft',
+                'status': 'draft', # O 'publish' se vuoi pubblicare subito
                 'categories': [int(p[6]) if p[6] else 1],
                 'featured_media': media_id,
                 'excerpt': p[7]
