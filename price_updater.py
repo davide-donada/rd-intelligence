@@ -35,7 +35,7 @@ def clean_amazon_image_url(url):
     return re.sub(r'\._[A-Z0-9,_\-]+_\.', '.', url)
 
 def get_amazon_data(asin):
-    url = f"https://www.amazon.it/dp/{asin}?th=1&psc=1" # No tag for scraping
+    url = f"https://www.amazon.it/dp/{asin}?th=1&psc=1"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
@@ -46,14 +46,12 @@ def get_amazon_data(asin):
         if resp.status_code != 200: return None, None
         
         soup = BeautifulSoup(resp.content, "lxml")
-        
         price_el = soup.select_one('span.a-price span.a-offscreen') or soup.select_one('.a-price .a-offscreen')
         price_val = float(price_el.get_text().replace("€", "").replace(".", "").replace(",", ".").strip()) if price_el else None
         
         deal_type = None
         badge_el = soup.select_one('#apex_desktop')
         badge_text = badge_el.get_text().lower() if badge_el else ""
-        
         if "offerta a tempo" in badge_text: deal_type = "⚡ Offerta a Tempo"
         elif "black friday" in badge_text: deal_type = "🖤 Offerta Black Friday"
         elif "prime day" in badge_text: deal_type = "🔵 Offerta Prime Day"
@@ -68,13 +66,11 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_t
     try:
         resp = requests.get(f"{WP_API_URL}/posts/{wp_post_id}?context=edit", headers=headers, timeout=20)
         if resp.status_code != 200: return True
-        
         post_data = resp.json()
         if post_data.get('status') == 'trash': return False
         content = post_data['content']['raw']
         original_content = content
 
-        # DATI
         new_str = f"{new_price:.2f}"
         diff = new_price - float(old_price)
         status_text = deal_label if deal_label else (f"📉 Ribasso di € {abs(diff):.2f}" if diff < -0.01 else (f"📈 Rialzo di € {abs(diff):.2f}" if diff > 0.01 else "⚖️ Prezzo Stabile"))
@@ -82,21 +78,33 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_t
         affiliate_url = f"https://www.amazon.it/dp/{asin}?tag={AMAZON_TAG}"
         clean_img = clean_amazon_image_url(image_url)
 
-        # CSS STYLES (Deve essere sempre presente per animazioni e sticky bar)
-        css_styles = """
+        # STILI E JS (Inline con Mobile Enforcer)
+        extra_code = """
 <style>
 @keyframes pulse-orange { 0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 153, 0, 0.7); } 70% { transform: scale(1.03); box-shadow: 0 0 0 10px rgba(255, 153, 0, 0); } 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 153, 0, 0); } }
 .rd-btn-pulse { animation: pulse-orange 2s infinite; }
-.rd-sticky-bar { position: fixed; bottom: 0; left: 0; width: 100%; background: #fff; box-shadow: 0 -2px 10px rgba(0,0,0,0.1); z-index: 99999; padding: 10px 20px; display: flex; justify-content: space-between; align-items: center; border-top: 2px solid #ff9900; }
-.rd-sticky-price { font-size: 1.2rem; font-weight: bold; color: #b12704; margin-right: 15px; }
-.rd-sticky-btn { background: #ff9900; color: white; padding: 8px 15px; text-decoration: none; border-radius: 4px; font-weight: bold; text-transform: uppercase; font-size: 0.9rem; }
-@media (max-width: 600px) { .rd-sticky-title { display: none; } }
+@media (max-width: 768px) { #rd-sticky-title-id { display: none !important; } }
 </style>
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+    var stickyBar = document.getElementById("rd-sticky-bar-container");
+    if (stickyBar) { document.body.appendChild(stickyBar); }
+    
+    function checkMobile() {
+        var title = document.getElementById("rd-sticky-title-id");
+        if (title) {
+            if (window.innerWidth < 768) { title.style.display = "none"; } 
+            else { title.style.display = "block"; }
+        }
+    }
+    window.addEventListener("resize", checkMobile);
+    checkMobile();
+});
+</script>
 """
 
-        # BOX PRINCIPALE (HEADER)
         new_header_block = f"""
-{css_styles}
+{extra_code}
 <div style="background-color: #fff; border: 1px solid #e1e1e1; padding: 20px; margin-bottom: 30px; border-radius: 8px; display: flex; flex-wrap: wrap; gap: 20px; align-items: center; position: relative;">
     <div style="flex: 1; text-align: center; min-width: 200px;">
         <a href="{affiliate_url}" target="_blank" rel="nofollow noopener sponsored">
@@ -110,7 +118,7 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_t
             <div style="font-weight: bold; color: #856404; text-transform: uppercase; font-size: 0.75rem;">Stato Attuale</div>
             <div class="rd-status-val" style="font-size: 0.9rem; color: #333; font-weight: 600;">{status_text}</div>
         </div>
-        <a class="rd-btn-pulse" style="background-color: #ff9900; color: white; padding: 14px 28px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block; font-size: 1.1rem; margin-top: 5px;" href="{affiliate_url}" target="_blank" rel="nofollow noopener sponsored">
+        <a class="rd-btn-pulse" style="background-color: #ff9900 !important; color: #ffffff !important; padding: 14px 28px; text-decoration: none !important; border-radius: 6px; font-weight: bold; display: inline-block; font-size: 1.1rem; margin-top: 5px;" href="{affiliate_url}" target="_blank" rel="nofollow noopener sponsored">
             👉 VEDI OFFERTA AMAZON
         </a>
         <p style="font-size: 0.75rem; color: #888; margin-top: 8px;">Ultimo controllo: {today}</p>
@@ -118,19 +126,24 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_t
 </div>
 """
 
-        # STICKY BAR (BOTTOM)
+        # Sticky Bar Wrapper + ID Titolo + Mobile Fix
         new_sticky_bar = f"""
-<div class="rd-sticky-bar">
-    <div class="rd-sticky-title" style="font-weight:bold; color:#333; max-width: 50%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{product_title}</div>
-    <div style="display:flex; align-items:center;">
-        <span class="rd-sticky-price">€ {new_str}</span>
-        <a class="rd-sticky-btn" href="{affiliate_url}" target="_blank" rel="nofollow noopener sponsored">Vedi Offerta</a>
+<div id="rd-sticky-bar-container" style="position: fixed !important; bottom: 0 !important; left: 0 !important; width: 100% !important; background: #ffffff !important; box-shadow: 0 -2px 10px rgba(0,0,0,0.1) !important; z-index: 2147483647 !important; border-top: 3px solid #ff9900 !important; padding: 0 !important;">
+    <div style="max-width: 1100px !important; margin: 0 auto !important; padding: 10px 20px !important; display: flex !important; justify-content: space-between !important; align-items: center !important;">
+        
+        <div id="rd-sticky-title-id" style="font-weight:bold !important; color:#333 !important; max-width: 60% !important; white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; font-family: sans-serif !important; font-size: 1rem !important; margin: 0 !important;">{product_title}</div>
+        
+        <div style="display:flex !important; align-items:center !important; margin: 0 !important; margin-left: auto !important;">
+            <span class="rd-sticky-price" style="font-size: 1.2rem !important; font-weight: bold !important; color: #b12704 !important; margin-right: 15px !important; white-space: nowrap !important;">€ {new_str}</span>
+            <a href="{affiliate_url}" target="_blank" rel="nofollow noopener sponsored" style="background: #ff9900 !important; color: #ffffff !important; padding: 10px 20px !important; text-decoration: none !important; border-radius: 4px !important; font-weight: bold !important; text-transform: uppercase !important; font-size: 0.9rem !important; border: none !important; box-shadow: none !important; white-space: nowrap !important;">Vedi Offerta</a>
+        </div>
+        
     </div>
 </div>
 """
 
-        # 1. SOSTITUZIONE HEADER (Box principale)
-        flex_pattern = r'(?:<style>.*?</style>\s*)?<div style="background-color: #fff; border: 1px solid #e1e1e1;[^>]*>.*?Ultimo controllo:.*?</p>(?:\s*</div>)+'
+        # Sostituzione Header
+        flex_pattern = r'(?:<style>.*?</style>\s*|.*<script>.*?</script>\s*)?<div style="background-color: #fff; border: 1px solid #e1e1e1;[^>]*>.*?Ultimo controllo:.*?</p>(?:\s*</div>)+'
         old_pattern = r'<div style="text-align: center;">.*?Prezzo aggiornato al:.*?</div>(?:\s*</div>)*'
 
         if re.search(flex_pattern, content, re.DOTALL):
@@ -140,15 +153,17 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_t
         else:
             content = new_header_block + content
 
-        # 2. SOSTITUZIONE/INSERIMENTO STICKY BAR
-        sticky_pattern = r'<div class="rd-sticky-bar">.*?</div>'
+        # Sostituzione Sticky Bar
+        sticky_pattern = r'<div id="rd-sticky-bar-container".*?</div>(?:\s*<style>.*?</style>)?(?:\s*</div>)?'
+        old_sticky_pattern = r'<div class="rd-sticky-bar">.*?</div>'
+
         if re.search(sticky_pattern, content, re.DOTALL):
             content = re.sub(sticky_pattern, new_sticky_bar, content, flags=re.DOTALL)
+        elif re.search(old_sticky_pattern, content, re.DOTALL):
+            content = re.sub(old_sticky_pattern, new_sticky_bar, content, flags=re.DOTALL)
         else:
-            # Se non c'è, la aggiungiamo alla fine
             content = content + new_sticky_bar
 
-        # Aggiornamenti Meta
         content = re.sub(r'(Ultimo controllo: |Prezzo aggiornato al:\s?)(.*?)(\s*</p>|</span>)', f'\\g<1>{today}\\g<3>', content, flags=re.IGNORECASE)
         content = re.sub(r'("price":\s?")([\d\.]+)(",)', f'\\g<1>{new_str}\\g<3>', content)
 
@@ -164,7 +179,7 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_t
         return True
 
 def run_price_monitor():
-    log("🚀 MONITORAGGIO v17.0 (CONVERSION MONSTER) AVVIATO...")
+    log("🚀 MONITORAGGIO v17.3 (MOBILE ENFORCER) AVVIATO...")
     while True:
         try:
             conn = mysql.connector.connect(**DB_CONFIG)
@@ -179,31 +194,4 @@ def run_price_monitor():
                 new_price, deal = get_amazon_data(p['asin'])
                 
                 if new_price:
-                    post_exists = update_wp_post_price(p['wp_post_id'], p['current_price'], new_price, deal, p['title'], p['image_url'], p['asin'])
-                    
-                    if not post_exists:
-                        # Gestione cestino...
-                        pass 
-                    
-                    if abs(float(p['current_price']) - new_price) > 0.01:
-                        conn = mysql.connector.connect(**DB_CONFIG)
-                        cur = conn.cursor()
-                        cur.execute("UPDATE products SET current_price = %s WHERE id = %s", (new_price, p['id']))
-                        cur.execute("INSERT INTO price_history (product_id, price) VALUES (%s, %s)", (p['id'], new_price))
-                        conn.commit()
-                        conn.close()
-                        log(f"      💰 CAMBIO: {p['asin']} -> € {new_price}")
-                    else:
-                        log(f"   ⚖️  {p['asin']} Stabile")
-                
-                time.sleep(15)
-            
-            log(f"✅ Giro completato. Pausa 1 ora.")
-            time.sleep(3600)
-            
-        except Exception as e:
-            log(f"❌ Errore critico nel loop: {e}")
-            time.sleep(60)
-
-if __name__ == "__main__":
-    run_price_monitor()
+                    post_
