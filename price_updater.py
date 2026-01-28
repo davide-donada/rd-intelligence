@@ -22,8 +22,8 @@ WP_APP_PASSWORD = os.getenv('WP_PASSWORD')
 AMAZON_TAG = "recensionedigitale-21" 
 
 # --- SETTAGGI PERFORMANCE ---
-SLEEP_NORMAL = 10       # Secondi di pausa tra un controllo e l'altro
-SLEEP_AFTER_UPDATE = 45 # Secondi di pausa DOPO un aggiornamento WP (Per far riposare il server)
+SLEEP_NORMAL = 10       
+SLEEP_AFTER_UPDATE = 45 
 
 def log(message):
     timestamp = datetime.now().strftime('%H:%M:%S')
@@ -64,11 +64,9 @@ def get_amazon_data(asin):
     except: return None, None
 
 def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_title, image_url, asin):
-    if not wp_post_id or wp_post_id == 0: return False # Return False se non facciamo nulla
+    if not wp_post_id or wp_post_id == 0: return False
     
     try:
-        # Leggere è leggero, Scrivere è pesante.
-        # Leggiamo prima il contenuto attuale.
         headers = get_wp_headers()
         resp = requests.get(f"{WP_API_URL}/posts/{wp_post_id}?context=edit", headers=headers, timeout=20)
         
@@ -147,59 +145,68 @@ document.addEventListener("DOMContentLoaded", function() {
 </div>
 """
 
-        # --- PULIZIA NUCLEARE ---
+        # --- FASE 1: PULIZIA AGGRESSIVA (GHOSTBUSTERS) ---
         
-        # Pulizia CSS/JS
+        # A. CSS/JS
         content = re.sub(r'<style>.*?</style>', '', content, flags=re.DOTALL)
         content = re.sub(r'<script>.*?</script>', '', content, flags=re.DOTALL)
         
-        # Loop rimozione Header duplicati
-        header_nuke_pattern = r'<div style="background-color: #fff; border: 1px solid #e1e1e1;.*?Ultimo controllo:.*?</p>\s*</div>\s*</div>'
-        while re.search(header_nuke_pattern, content, re.DOTALL):
-            content = re.sub(header_nuke_pattern, '', content, count=1, flags=re.DOTALL)
+        # B. Rimuovi Header duplicati (Pattern esteso per catturare varianti)
+        header_patterns = [
+            r'<div style="background-color: #fff; border: 1px solid #e1e1e1;.*?Ultimo controllo:.*?</p>\s*</div>\s*</div>',
+            r'<div style="[^"]*background-color: #fff[^"]*".*?Ultimo controllo:.*?</p>\s*</div>(?:\s*</div>)?',
+            r'<div style="text-align: center;">.*?Prezzo aggiornato al:.*?</div>(?:\s*</div>)*'
+        ]
+        for pattern in header_patterns:
+            while re.search(pattern, content, re.DOTALL):
+                content = re.sub(pattern, '', content, count=1, flags=re.DOTALL)
 
-        old_header_pattern = r'<div style="text-align: center;">.*?Prezzo aggiornato al:.*?</div>(?:\s*</div>)*'
-        while re.search(old_header_pattern, content, re.DOTALL):
-            content = re.sub(old_header_pattern, '', content, count=1, flags=re.DOTALL)
+        # C. Rimuovi i FANTASMI (Frammenti orfani della sticky bar)
+        # Questa regex cerca div che hanno 'display: flex !important' e 'rd-sticky-price' ma NON hanno un ID contenitore.
+        ghost_pattern = r'<div style="display:\s*flex\s*!important;\s*align-items:\s*center\s*!important;[^>]*>\s*<span class="rd-sticky-price".*?</div>'
+        while re.search(ghost_pattern, content, re.DOTALL):
+            content = re.sub(ghost_pattern, '', content, count=1, flags=re.DOTALL)
 
-        # South Pole Strategy (Pulizia Fondo)
-        footer_nuke_pattern = r'(<p style="font-size: 0.7rem;.*?In qualità di Affiliato Amazon.*?</em></p>)(.*)(<script type="application/ld\+json">)'
+        # D. Rimuovi Sticky Bar Ufficiali (in Loop)
+        official_sticky = r'(?:\s*)?<div id="rd-sticky-bar-container".*?</div>(?:\s*)?'
+        while re.search(official_sticky, content, re.DOTALL):
+             content = re.sub(official_sticky, '', content, count=1, flags=re.DOTALL)
+
+
+        # E. Footer Clean-Up (Ancoraggio al testo "In qualità di Affiliato...")
+        # Usa il testo come ancora, non i tag HTML che possono cambiare.
+        # Cancella TUTTO da quel testo fino allo script JSON.
+        footer_anchor_regex = r'(In qualità di Affiliato Amazon.*?</em></p>)(.*)(<script type="application/ld\+json">)'
         
-        if re.search(footer_nuke_pattern, content, re.DOTALL):
-            content = re.sub(footer_nuke_pattern, f'\\g<1>{new_sticky_bar}\\g<3>', content, flags=re.DOTALL)
+        match = re.search(footer_anchor_regex, content, re.DOTALL)
+        if match:
+            # Se trova l'ancora, Pialla tutto il mezzo (Gruppo 2) e sostituisci con nuova bar
+            # Il gruppo 2 contiene tutto lo sporco accumulato.
+            content = re.sub(footer_anchor_regex, f'\\g<1>{new_sticky_bar}\\g<3>', content, flags=re.DOTALL)
         else:
-            # Fallback
-            sticky_loop = r'(?:\s*)?<div id="rd-sticky-bar-container".*?</div>(?:\s*)?'
-            while re.search(sticky_loop, content, re.DOTALL):
-                content = re.sub(sticky_loop, '', content, count=1, flags=re.DOTALL)
-            
+            # Se NON trova l'ancora (caso raro), appendi in fondo prima dello script
             if '<script type="application/ld+json">' in content:
                 content = content.replace('<script type="application/ld+json">', new_sticky_bar + '\n<script type="application/ld+json">')
             else:
                 content = content + new_sticky_bar
 
-        # --- RICOSTRUZIONE ---
+        # --- FASE 2: RICOSTRUZIONE ---
         content = new_header_block + content
 
         # Metadata Update
         content = re.sub(r'(Ultimo controllo: |Prezzo aggiornato al:\s?)(.*?)(\s*</p>|</span>)', f'\\g<1>{today}\\g<3>', content, flags=re.IGNORECASE)
         content = re.sub(r'("price":\s?")([\d\.]+)(",)', f'\\g<1>{new_str}\\g<3>', content)
 
-        # --- DECISIONE CRITICA ---
-        # Aggiorniamo WP solo se il contenuto è DAVVERO cambiato.
-        # Questo riduce il carico del 90% se l'articolo è già a posto.
-        
         if content != original_content: 
-            log(f"      🔧 Rilevate modifiche necessarie per ID: {wp_post_id}...")
+            log(f"      🔧 Rilevato sporco/modifiche per ID: {wp_post_id}...")
             update_resp = requests.post(f"{WP_API_URL}/posts/{wp_post_id}", headers=headers, json={'content': content})
             if update_resp.status_code == 200:
-                log(f"      ✨ WP Aggiornato (ID: {wp_post_id}). Entro in pausa per {SLEEP_AFTER_UPDATE}s...")
-                return True # Segnala che abbiamo fatto una scrittura
+                log(f"      ✨ WP PULITO E AGGIORNATO (ID: {wp_post_id}). Pausa {SLEEP_AFTER_UPDATE}s...")
+                return True
             else:
                 log(f"      ⚠️ Errore aggiornamento WP: {update_resp.status_code}")
                 return False
         else:
-            # log(f"      ✅ Nessuna modifica necessaria per ID: {wp_post_id}")
             return False
 
     except Exception as e:
@@ -207,29 +214,24 @@ document.addEventListener("DOMContentLoaded", function() {
         return False
 
 def run_price_monitor():
-    log("🚀 MONITORAGGIO v18.0 (ECO-MODE) AVVIATO...")
+    log("🚀 MONITORAGGIO v18.1 (GHOSTBUSTERS) AVVIATO...")
     while True:
         try:
             conn = mysql.connector.connect(**DB_CONFIG)
             cursor = conn.cursor(dictionary=True)
             cursor.execute("SELECT id, asin, current_price, wp_post_id, title, image_url FROM products WHERE status = 'published' ORDER BY id DESC")
             products = cursor.fetchall()
-            conn.close() # Chiudiamo subito per liberare risorse MySQL
+            conn.close()
             
-            log(f"📊 Scansione {len(products)} prodotti (Modalità Risparmio Energetico)...")
+            log(f"📊 Scansione {len(products)} prodotti...")
             
             for p in products:
                 new_price, deal = get_amazon_data(p['asin'])
                 
                 if new_price:
-                    # Chiamiamo la funzione update.
-                    # Se restituisce True (ha scritto su WP), facciamo la pausa lunga.
-                    # Se restituisce False (non ha toccato WP), facciamo la pausa breve.
-                    
                     did_update = update_wp_post_price(p['wp_post_id'], p['current_price'], new_price, deal, p['title'], p['image_url'], p['asin'])
                     
                     if did_update:
-                        # Aggiorniamo DB locale solo se necessario
                         if abs(float(p['current_price']) - new_price) > 0.01:
                             conn = mysql.connector.connect(**DB_CONFIG)
                             cur = conn.cursor()
@@ -238,12 +240,11 @@ def run_price_monitor():
                             conn.commit()
                             conn.close()
                         
-                        time.sleep(SLEEP_AFTER_UPDATE) # PAUSA LUNGA
+                        time.sleep(SLEEP_AFTER_UPDATE)
                     else:
-                        time.sleep(SLEEP_NORMAL) # PAUSA BREVE
-                
+                        time.sleep(SLEEP_NORMAL)
                 else:
-                    time.sleep(SLEEP_NORMAL) # Pausa breve anche se errore Amazon
+                    time.sleep(SLEEP_NORMAL)
             
             log(f"✅ Giro completato. Pausa 1 ora.")
             time.sleep(3600)
