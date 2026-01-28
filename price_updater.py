@@ -21,6 +21,10 @@ WP_USER = os.getenv('WP_USER', 'davide')
 WP_APP_PASSWORD = os.getenv('WP_PASSWORD')
 AMAZON_TAG = "recensionedigitale-21" 
 
+# --- SETTAGGI PERFORMANCE ---
+SLEEP_NORMAL = 10       # Secondi di pausa tra un controllo e l'altro
+SLEEP_AFTER_UPDATE = 45 # Secondi di pausa DOPO un aggiornamento WP (Per far riposare il server)
+
 def log(message):
     timestamp = datetime.now().strftime('%H:%M:%S')
     print(f"[{timestamp}] {message}", flush=True)
@@ -60,17 +64,22 @@ def get_amazon_data(asin):
     except: return None, None
 
 def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_title, image_url, asin):
-    if not wp_post_id or wp_post_id == 0: return True
-    headers = get_wp_headers()
+    if not wp_post_id or wp_post_id == 0: return False # Return False se non facciamo nulla
     
     try:
+        # Leggere è leggero, Scrivere è pesante.
+        # Leggiamo prima il contenuto attuale.
+        headers = get_wp_headers()
         resp = requests.get(f"{WP_API_URL}/posts/{wp_post_id}?context=edit", headers=headers, timeout=20)
-        if resp.status_code != 200: return True
+        
+        if resp.status_code != 200: return False
         post_data = resp.json()
         if post_data.get('status') == 'trash': return False
+        
         content = post_data['content']['raw']
         original_content = content
 
+        # Logica Prezzi
         new_str = f"{new_price:.2f}"
         diff = new_price - float(old_price)
         status_text = deal_label if deal_label else (f"📉 Ribasso di € {abs(diff):.2f}" if diff < -0.01 else (f"📈 Rialzo di € {abs(diff):.2f}" if diff > 0.01 else "⚖️ Prezzo Stabile"))
@@ -78,8 +87,7 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_t
         affiliate_url = f"https://www.amazon.it/dp/{asin}?tag={AMAZON_TAG}"
         clean_img = clean_amazon_image_url(image_url)
 
-        # --- BLOCCHI HTML DA INSERIRE ---
-
+        # --- BLOCCHI HTML ---
         styles_scripts = """
 <style>
 @keyframes pulse-orange { 0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 153, 0, 0.7); } 70% { transform: scale(1.03); box-shadow: 0 0 0 10px rgba(255, 153, 0, 0); } 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 153, 0, 0); } }
@@ -139,95 +147,103 @@ document.addEventListener("DOMContentLoaded", function() {
 </div>
 """
 
-        # --- FASE 1: PULIZIA NUCLEARE (The Nuke) ---
+        # --- PULIZIA NUCLEARE ---
         
-        # A. Pulizia CSS/JS (Gestisce anche <br /> intrusi)
+        # Pulizia CSS/JS
         content = re.sub(r'<style>.*?</style>', '', content, flags=re.DOTALL)
         content = re.sub(r'<script>.*?</script>', '', content, flags=re.DOTALL)
         
-        # B. Pulizia Header (Loop Aggressivo basato sulla struttura)
-        # Identifica: un div che inizia con sfondo bianco, contiene immagine, prezzo e finisce con due div chiusi.
-        # Mangia tutto quello che assomiglia a un box header, vecchio o nuovo.
+        # Loop rimozione Header duplicati
         header_nuke_pattern = r'<div style="background-color: #fff; border: 1px solid #e1e1e1;.*?Ultimo controllo:.*?</p>\s*</div>\s*</div>'
         while re.search(header_nuke_pattern, content, re.DOTALL):
             content = re.sub(header_nuke_pattern, '', content, count=1, flags=re.DOTALL)
 
-        # Fallback Header: cerca quelli vecchi senza stile specifico
         old_header_pattern = r'<div style="text-align: center;">.*?Prezzo aggiornato al:.*?</div>(?:\s*</div>)*'
         while re.search(old_header_pattern, content, re.DOTALL):
             content = re.sub(old_header_pattern, '', content, count=1, flags=re.DOTALL)
 
-        # C. Pulizia Footer (South Pole Strategy)
-        # Cancella TUTTO tra il Disclaimer e lo Schema.org.
-        # Questo elimina sticky bar, frammenti ghost, div aperti, tutto.
+        # South Pole Strategy (Pulizia Fondo)
         footer_nuke_pattern = r'(<p style="font-size: 0.7rem;.*?In qualità di Affiliato Amazon.*?</em></p>)(.*)(<script type="application/ld\+json">)'
         
         if re.search(footer_nuke_pattern, content, re.DOTALL):
-            # Sostituisce la parte centrale (junk) con la nuova sticky bar
             content = re.sub(footer_nuke_pattern, f'\\g<1>{new_sticky_bar}\\g<3>', content, flags=re.DOTALL)
         else:
-            # Se non trova il disclaimer (strano), prova a cancellare solo le sticky bar note
+            # Fallback
             sticky_loop = r'(?:\s*)?<div id="rd-sticky-bar-container".*?</div>(?:\s*)?'
             while re.search(sticky_loop, content, re.DOTALL):
                 content = re.sub(sticky_loop, '', content, count=1, flags=re.DOTALL)
             
-            # E appende la nuova in fondo
             if '<script type="application/ld+json">' in content:
                 content = content.replace('<script type="application/ld+json">', new_sticky_bar + '\n<script type="application/ld+json">')
             else:
                 content = content + new_sticky_bar
 
-        # --- FASE 2: RICOSTRUZIONE ---
-        
-        # Inserisci Header (solo uno, in cima)
+        # --- RICOSTRUZIONE ---
         content = new_header_block + content
 
-        # --- FASE 3: METADATA ---
+        # Metadata Update
         content = re.sub(r'(Ultimo controllo: |Prezzo aggiornato al:\s?)(.*?)(\s*</p>|</span>)', f'\\g<1>{today}\\g<3>', content, flags=re.IGNORECASE)
         content = re.sub(r'("price":\s?")([\d\.]+)(",)', f'\\g<1>{new_str}\\g<3>', content)
 
+        # --- DECISIONE CRITICA ---
+        # Aggiorniamo WP solo se il contenuto è DAVVERO cambiato.
+        # Questo riduce il carico del 90% se l'articolo è già a posto.
+        
         if content != original_content: 
+            log(f"      🔧 Rilevate modifiche necessarie per ID: {wp_post_id}...")
             update_resp = requests.post(f"{WP_API_URL}/posts/{wp_post_id}", headers=headers, json={'content': content})
             if update_resp.status_code == 200:
-                log(f"      ✨ WP NUCLEARIZZATO & RIPARATO (ID: {wp_post_id}) -> € {new_str}")
-        
-        return True
+                log(f"      ✨ WP Aggiornato (ID: {wp_post_id}). Entro in pausa per {SLEEP_AFTER_UPDATE}s...")
+                return True # Segnala che abbiamo fatto una scrittura
+            else:
+                log(f"      ⚠️ Errore aggiornamento WP: {update_resp.status_code}")
+                return False
+        else:
+            # log(f"      ✅ Nessuna modifica necessaria per ID: {wp_post_id}")
+            return False
 
     except Exception as e:
         log(f"      ❌ Errore Critico WP API: {e}")
-        return True
+        return False
 
 def run_price_monitor():
-    log("🚀 MONITORAGGIO v17.8 (THE NUKE) AVVIATO...")
+    log("🚀 MONITORAGGIO v18.0 (ECO-MODE) AVVIATO...")
     while True:
         try:
             conn = mysql.connector.connect(**DB_CONFIG)
             cursor = conn.cursor(dictionary=True)
             cursor.execute("SELECT id, asin, current_price, wp_post_id, title, image_url FROM products WHERE status = 'published' ORDER BY id DESC")
             products = cursor.fetchall()
-            conn.close()
+            conn.close() # Chiudiamo subito per liberare risorse MySQL
             
-            log(f"📊 Scansione {len(products)} prodotti...")
+            log(f"📊 Scansione {len(products)} prodotti (Modalità Risparmio Energetico)...")
             
             for p in products:
                 new_price, deal = get_amazon_data(p['asin'])
                 
                 if new_price:
-                    post_exists = update_wp_post_price(p['wp_post_id'], p['current_price'], new_price, deal, p['title'], p['image_url'], p['asin'])
-                    if not post_exists: pass
+                    # Chiamiamo la funzione update.
+                    # Se restituisce True (ha scritto su WP), facciamo la pausa lunga.
+                    # Se restituisce False (non ha toccato WP), facciamo la pausa breve.
                     
-                    if abs(float(p['current_price']) - new_price) > 0.01:
-                        conn = mysql.connector.connect(**DB_CONFIG)
-                        cur = conn.cursor()
-                        cur.execute("UPDATE products SET current_price = %s WHERE id = %s", (new_price, p['id']))
-                        cur.execute("INSERT INTO price_history (product_id, price) VALUES (%s, %s)", (p['id'], new_price))
-                        conn.commit()
-                        conn.close()
-                        log(f"      💰 CAMBIO: {p['asin']} -> € {new_price}")
+                    did_update = update_wp_post_price(p['wp_post_id'], p['current_price'], new_price, deal, p['title'], p['image_url'], p['asin'])
+                    
+                    if did_update:
+                        # Aggiorniamo DB locale solo se necessario
+                        if abs(float(p['current_price']) - new_price) > 0.01:
+                            conn = mysql.connector.connect(**DB_CONFIG)
+                            cur = conn.cursor()
+                            cur.execute("UPDATE products SET current_price = %s WHERE id = %s", (new_price, p['id']))
+                            cur.execute("INSERT INTO price_history (product_id, price) VALUES (%s, %s)", (p['id'], new_price))
+                            conn.commit()
+                            conn.close()
+                        
+                        time.sleep(SLEEP_AFTER_UPDATE) # PAUSA LUNGA
                     else:
-                        log(f"   ⚖️  {p['asin']} Stabile")
+                        time.sleep(SLEEP_NORMAL) # PAUSA BREVE
                 
-                time.sleep(15)
+                else:
+                    time.sleep(SLEEP_NORMAL) # Pausa breve anche se errore Amazon
             
             log(f"✅ Giro completato. Pausa 1 ora.")
             time.sleep(3600)
