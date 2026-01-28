@@ -78,8 +78,10 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_t
         affiliate_url = f"https://www.amazon.it/dp/{asin}?tag={AMAZON_TAG}"
         clean_img = clean_amazon_image_url(image_url)
 
-        # HTML BLOCKS
-        extra_code = """
+        # --- 1. COSTRUZIONE NUOVI BLOCCHI ---
+
+        # Blocco CSS/JS (Base)
+        styles_scripts = """
 <style>
 @keyframes pulse-orange { 0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 153, 0, 0.7); } 70% { transform: scale(1.03); box-shadow: 0 0 0 10px rgba(255, 153, 0, 0); } 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 153, 0, 0); } }
 .rd-btn-pulse { animation: pulse-orange 2s infinite; }
@@ -103,8 +105,9 @@ document.addEventListener("DOMContentLoaded", function() {
 </script>
 """
 
+        # Nuovo Header
         new_header_block = f"""
-{extra_code}
+{styles_scripts}
 <div style="background-color: #fff; border: 1px solid #e1e1e1; padding: 20px; margin-bottom: 30px; border-radius: 8px; display: flex; flex-wrap: wrap; gap: 20px; align-items: center; position: relative;">
     <div style="flex: 1; text-align: center; min-width: 200px;">
         <a href="{affiliate_url}" target="_blank" rel="nofollow noopener sponsored">
@@ -126,6 +129,7 @@ document.addEventListener("DOMContentLoaded", function() {
 </div>
 """
 
+        # Nuova Sticky Bar
         new_sticky_bar = f"""
 <div id="rd-sticky-bar-container" style="position: fixed !important; bottom: 0 !important; left: 0 !important; width: 100% !important; background: #ffffff !important; box-shadow: 0 -2px 10px rgba(0,0,0,0.1) !important; z-index: 2147483647 !important; border-top: 3px solid #ff9900 !important; padding: 0 !important;">
     <div style="max-width: 1100px !important; margin: 0 auto !important; padding: 10px 20px !important; display: flex !important; justify-content: space-between !important; align-items: center !important;">
@@ -138,47 +142,40 @@ document.addEventListener("DOMContentLoaded", function() {
 </div>
 """
 
-        # --- 1. PULIZIA TESTATA (RIMUOVE TUTTI I BOX VECCHI E NUOVI) ---
-        # Questa regex intercetta QUALSIASI box prezzi (vecchio o nuovo) e lo elimina.
-        # Viene eseguita finché ne trova, per eliminare i duplicati.
-        any_header_pattern = r'(?:<style>.*?</style>\s*|.*<script>.*?</script>\s*)?<div style="(?:background-color: #fff|text-align: center).*?Prezzo aggiornato al:.*?</p>(?:\s*</div>)+'
+        # --- 2. FASE DI PULIZIA (SANITIZER) ---
         
-        # Rimuove TUTTE le occorrenze esistenti
-        content = re.sub(any_header_pattern, '', content, flags=re.DOTALL)
+        # A. Rimuovi TUTTI gli stili e script generati da noi (ovunque siano)
+        content = re.sub(r'<style>\s*@keyframes pulse-orange.*?</style>', '', content, flags=re.DOTALL)
+        content = re.sub(r'<script>\s*document\.addEventListener\("DOMContentLoaded", function\(\).*?</script>', '', content, flags=re.DOTALL)
+
+        # B. Rimuovi TUTTI i box prezzi (vecchi, nuovi, duplicati) in base al testo "Prezzo aggiornato al"
+        # Questa regex è aggressiva e mangia qualsiasi div che contenga quella frase.
+        content = re.sub(r'<div[^>]*>.*?Prezzo aggiornato al:.*?</p>(?:\s*</div>)+', '', content, flags=re.DOTALL)
+
+        # C. Rimuovi TUTTE le Sticky Bar (vecchie, nuove, orfane)
+        content = re.sub(r'<div id="rd-sticky-bar-container".*?</div>(?:\s*)?', '', content, flags=re.DOTALL)
+        content = re.sub(r'<div class="rd-sticky-bar">.*?</div>', '', content, flags=re.DOTALL)
+        content = re.sub(r'', '', content) # Pulizia commenti orfani
+
+        # --- 3. FASE DI RICOSTRUZIONE ---
         
-        # Aggiunge il NUOVO header pulito in cima
+        # A. Aggiungi il nuovo Header pulito in cima
         content = new_header_block + content
 
-
-        # --- 2. PULIZIA CODA (STRATEGIA "SOUTH POLE") ---
-        # Cerca il Disclaimer Amazon come "ancora". 
-        # Cancella tutto ciò che sta TRA il Disclaimer e lo script Schema.org.
-        # Inserisce lì la nuova sticky bar.
-        
-        footer_cleanup_pattern = r'(<p style="font-size: 0.7rem;.*?In qualità di Affiliato Amazon.*?</em></p>)(.*?)(<script type="application/ld\+json">)'
-        
-        if re.search(footer_cleanup_pattern, content, re.DOTALL):
-            # Gruppo 1: Disclaimer (lo teniamo)
-            # Gruppo 2: Il caos di div rotti (lo cancelliamo)
-            # Gruppo 3: Script Schema (lo teniamo)
-            # Inseriamo la new_sticky_bar al posto del Gruppo 2
-            content = re.sub(footer_cleanup_pattern, f'\\g<1>{new_sticky_bar}\\g<3>', content, flags=re.DOTALL)
+        # B. Aggiungi la nuova Sticky Bar in fondo (Prima dello Schema JSON)
+        if '<script type="application/ld+json">' in content:
+            content = content.replace('<script type="application/ld+json">', new_sticky_bar + '\n<script type="application/ld+json">')
         else:
-            # Fallback se non trova il disclaimer (vecchissimi articoli): usa metodo precedente
-            fallback_pattern = r'(<div id="rd-sticky-bar-container".*?)(<script type="application/ld\+json">)'
-            if re.search(fallback_pattern, content, re.DOTALL):
-                 content = re.sub(fallback_pattern, f'{new_sticky_bar}\\g<2>', content, flags=re.DOTALL)
-            else:
-                 content = re.sub(r'(<script type="application/ld\+json">)', f'{new_sticky_bar}\\g<1>', content)
+            content = content + new_sticky_bar # Fallback estremo
 
-        # Aggiornamenti Meta Standard
+        # --- 4. AGGIORNAMENTO META (Solo per sicurezza) ---
         content = re.sub(r'(Ultimo controllo: |Prezzo aggiornato al:\s?)(.*?)(\s*</p>|</span>)', f'\\g<1>{today}\\g<3>', content, flags=re.IGNORECASE)
         content = re.sub(r'("price":\s?")([\d\.]+)(",)', f'\\g<1>{new_str}\\g<3>', content)
 
         if content != original_content: 
             update_resp = requests.post(f"{WP_API_URL}/posts/{wp_post_id}", headers=headers, json={'content': content})
             if update_resp.status_code == 200:
-                log(f"      ✨ WP Aggiornato e RIPARATO (ID: {wp_post_id}) -> € {new_str}")
+                log(f"      ✨ WP SANITIZZATO (ID: {wp_post_id}) -> € {new_str}")
         
         return True
 
@@ -187,7 +184,7 @@ document.addEventListener("DOMContentLoaded", function() {
         return True
 
 def run_price_monitor():
-    log("🚀 MONITORAGGIO v17.5 (SOUTH POLE REPAIR) AVVIATO...")
+    log("🚀 MONITORAGGIO v17.6 (SANITIZER) AVVIATO...")
     while True:
         try:
             conn = mysql.connector.connect(**DB_CONFIG)
