@@ -139,44 +139,48 @@ document.addEventListener("DOMContentLoaded", function() {
 </div>
 """
 
-        # --- FASE 1: STERMINIO TOTALE (LOOP CLEANER) ---
+        # --- FASE 1: PULIZIA NUCLEARE (The Nuke) ---
         
-        # 1. Rimuovi TUTTI gli stili e script generati da noi (Loop finché ce ne sono)
-        while re.search(r'<style>\s*@keyframes pulse-orange.*?</style>', content, re.DOTALL):
-            content = re.sub(r'<style>\s*@keyframes pulse-orange.*?</style>', '', content, count=1, flags=re.DOTALL)
+        # A. Pulizia CSS/JS (Gestisce anche <br /> intrusi)
+        content = re.sub(r'<style>.*?</style>', '', content, flags=re.DOTALL)
+        content = re.sub(r'<script>.*?</script>', '', content, flags=re.DOTALL)
+        
+        # B. Pulizia Header (Loop Aggressivo basato sulla struttura)
+        # Identifica: un div che inizia con sfondo bianco, contiene immagine, prezzo e finisce con due div chiusi.
+        # Mangia tutto quello che assomiglia a un box header, vecchio o nuovo.
+        header_nuke_pattern = r'<div style="background-color: #fff; border: 1px solid #e1e1e1;.*?Ultimo controllo:.*?</p>\s*</div>\s*</div>'
+        while re.search(header_nuke_pattern, content, re.DOTALL):
+            content = re.sub(header_nuke_pattern, '', content, count=1, flags=re.DOTALL)
 
-        while re.search(r'<script>\s*document\.addEventListener\("DOMContentLoaded", function\(\).*?</script>', content, re.DOTALL):
-            content = re.sub(r'<script>\s*document\.addEventListener\("DOMContentLoaded", function\(\).*?</script>', '', content, count=1, flags=re.DOTALL)
+        # Fallback Header: cerca quelli vecchi senza stile specifico
+        old_header_pattern = r'<div style="text-align: center;">.*?Prezzo aggiornato al:.*?</div>(?:\s*</div>)*'
+        while re.search(old_header_pattern, content, re.DOTALL):
+            content = re.sub(old_header_pattern, '', content, count=1, flags=re.DOTALL)
 
-        # 2. Rimuovi TUTTI i box prezzi (vecchi e nuovi)
-        # La regex cerca qualsiasi div con 'background-color: #fff' o 'text-align: center' che contenga 'Prezzo aggiornato al'
-        # Usiamo un loop per cancellare anche i duplicati adiacenti.
-        header_pattern = r'(?:<style>.*?</style>\s*|.*<script>.*?</script>\s*)?<div style="(?:background-color: #fff|text-align: center).*?Prezzo aggiornato al:.*?</p>(?:\s*</div>)+'
-        while re.search(header_pattern, content, re.DOTALL):
-            content = re.sub(header_pattern, '', content, count=1, flags=re.DOTALL)
-
-        # 3. Rimuovi TUTTE le Sticky Bar ufficiali
-        sticky_pattern = r'(?:\s*)?<div id="rd-sticky-bar-container".*?</div>(?:\s*)?'
-        while re.search(sticky_pattern, content, re.DOTALL):
-            content = re.sub(sticky_pattern, '', content, count=1, flags=re.DOTALL)
+        # C. Pulizia Footer (South Pole Strategy)
+        # Cancella TUTTO tra il Disclaimer e lo Schema.org.
+        # Questo elimina sticky bar, frammenti ghost, div aperti, tutto.
+        footer_nuke_pattern = r'(<p style="font-size: 0.7rem;.*?In qualità di Affiliato Amazon.*?</em></p>)(.*)(<script type="application/ld\+json">)'
+        
+        if re.search(footer_nuke_pattern, content, re.DOTALL):
+            # Sostituisce la parte centrale (junk) con la nuova sticky bar
+            content = re.sub(footer_nuke_pattern, f'\\g<1>{new_sticky_bar}\\g<3>', content, flags=re.DOTALL)
+        else:
+            # Se non trova il disclaimer (strano), prova a cancellare solo le sticky bar note
+            sticky_loop = r'(?:\s*)?<div id="rd-sticky-bar-container".*?</div>(?:\s*)?'
+            while re.search(sticky_loop, content, re.DOTALL):
+                content = re.sub(sticky_loop, '', content, count=1, flags=re.DOTALL)
             
-        # 4. Rimuovi i "Frammenti Fantasma" (Quelli rotti in fondo senza container)
-        # Identifichiamo i frammenti dalla classe 'rd-sticky-price' che si trovano dentro un div generico
-        ghost_pattern = r'<div style="display: flex !important; align-items: center !important;[^>]*>\s*<span class="rd-sticky-price".*?Vedi Offerta</a></div>'
-        while re.search(ghost_pattern, content, re.DOTALL):
-             content = re.sub(ghost_pattern, '', content, count=1, flags=re.DOTALL)
-
+            # E appende la nuova in fondo
+            if '<script type="application/ld+json">' in content:
+                content = content.replace('<script type="application/ld+json">', new_sticky_bar + '\n<script type="application/ld+json">')
+            else:
+                content = content + new_sticky_bar
 
         # --- FASE 2: RICOSTRUZIONE ---
         
-        # A. Aggiungi il nuovo Header pulito (Una volta sola)
+        # Inserisci Header (solo uno, in cima)
         content = new_header_block + content
-
-        # B. Aggiungi la nuova Sticky Bar in fondo
-        if '<script type="application/ld+json">' in content:
-            content = content.replace('<script type="application/ld+json">', new_sticky_bar + '\n<script type="application/ld+json">')
-        else:
-            content = content + new_sticky_bar
 
         # --- FASE 3: METADATA ---
         content = re.sub(r'(Ultimo controllo: |Prezzo aggiornato al:\s?)(.*?)(\s*</p>|</span>)', f'\\g<1>{today}\\g<3>', content, flags=re.IGNORECASE)
@@ -185,7 +189,7 @@ document.addEventListener("DOMContentLoaded", function() {
         if content != original_content: 
             update_resp = requests.post(f"{WP_API_URL}/posts/{wp_post_id}", headers=headers, json={'content': content})
             if update_resp.status_code == 200:
-                log(f"      ✨ WP STERMINATO & RICOSTRUITO (ID: {wp_post_id}) -> € {new_str}")
+                log(f"      ✨ WP NUCLEARIZZATO & RIPARATO (ID: {wp_post_id}) -> € {new_str}")
         
         return True
 
@@ -194,7 +198,7 @@ document.addEventListener("DOMContentLoaded", function() {
         return True
 
 def run_price_monitor():
-    log("🚀 MONITORAGGIO v17.7 (LOOP SANITIZER) AVVIATO...")
+    log("🚀 MONITORAGGIO v17.8 (THE NUKE) AVVIATO...")
     while True:
         try:
             conn = mysql.connector.connect(**DB_CONFIG)
