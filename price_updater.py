@@ -78,7 +78,7 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_t
         affiliate_url = f"https://www.amazon.it/dp/{asin}?tag={AMAZON_TAG}"
         clean_img = clean_amazon_image_url(image_url)
 
-        # STILI E JS (Inline)
+        # HTML BLOCKS
         extra_code = """
 <style>
 @keyframes pulse-orange { 0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 153, 0, 0.7); } 70% { transform: scale(1.03); box-shadow: 0 0 0 10px rgba(255, 153, 0, 0); } 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 153, 0, 0); } }
@@ -138,30 +138,38 @@ document.addEventListener("DOMContentLoaded", function() {
 </div>
 """
 
-        # 1. HEADER REPLACEMENT
-        flex_pattern = r'(?:<style>.*?</style>\s*|.*<script>.*?</script>\s*)?<div style="background-color: #fff; border: 1px solid #e1e1e1;[^>]*>.*?Ultimo controllo:.*?</p>(?:\s*</div>)+'
-        old_pattern = r'<div style="text-align: center;">.*?Prezzo aggiornato al:.*?</div>(?:\s*</div>)*'
-
-        if re.search(flex_pattern, content, re.DOTALL):
-            content = re.sub(flex_pattern, new_header_block, content, flags=re.DOTALL)
-        elif re.search(old_pattern, content, re.DOTALL):
-            content = re.sub(old_pattern, new_header_block, content, flags=re.DOTALL)
-        else:
-            content = new_header_block + content
-
-        # 2. STICKY BAR CLEAN SWEEP REPLACEMENT
-        # Cerca dall'inizio del vecchio container (o duplicati) fino allo script schema.
-        # Questo elimina tutto il "garbage" accumulato tra la fine dell'articolo e lo script JSON-LD.
+        # --- 1. PULIZIA TESTATA (RIMUOVE TUTTI I BOX VECCHI E NUOVI) ---
+        # Questa regex intercetta QUALSIASI box prezzi (vecchio o nuovo) e lo elimina.
+        # Viene eseguita finché ne trova, per eliminare i duplicati.
+        any_header_pattern = r'(?:<style>.*?</style>\s*|.*<script>.*?</script>\s*)?<div style="(?:background-color: #fff|text-align: center).*?Prezzo aggiornato al:.*?</p>(?:\s*</div>)+'
         
-        # Pattern A: Se trova il container con ID (anche rotto/duplicato)
-        clean_sweep_pattern = r'(<div id="rd-sticky-bar-container".*?)(<script type="application/ld\+json">)'
+        # Rimuove TUTTE le occorrenze esistenti
+        content = re.sub(any_header_pattern, '', content, flags=re.DOTALL)
         
-        if re.search(clean_sweep_pattern, content, re.DOTALL):
-            # Sostituisce tutto il blocco marcio con la nuova barra pulita + lo script schema originale (gruppo 2)
-            content = re.sub(clean_sweep_pattern, f'{new_sticky_bar}\\g<2>', content, flags=re.DOTALL)
+        # Aggiunge il NUOVO header pulito in cima
+        content = new_header_block + content
+
+
+        # --- 2. PULIZIA CODA (STRATEGIA "SOUTH POLE") ---
+        # Cerca il Disclaimer Amazon come "ancora". 
+        # Cancella tutto ciò che sta TRA il Disclaimer e lo script Schema.org.
+        # Inserisce lì la nuova sticky bar.
+        
+        footer_cleanup_pattern = r'(<p style="font-size: 0.7rem;.*?In qualità di Affiliato Amazon.*?</em></p>)(.*?)(<script type="application/ld\+json">)'
+        
+        if re.search(footer_cleanup_pattern, content, re.DOTALL):
+            # Gruppo 1: Disclaimer (lo teniamo)
+            # Gruppo 2: Il caos di div rotti (lo cancelliamo)
+            # Gruppo 3: Script Schema (lo teniamo)
+            # Inseriamo la new_sticky_bar al posto del Gruppo 2
+            content = re.sub(footer_cleanup_pattern, f'\\g<1>{new_sticky_bar}\\g<3>', content, flags=re.DOTALL)
         else:
-            # Fallback: Se non trova l'ID (vecchissimi articoli), lo appende prima dello script schema
-            content = re.sub(r'(<script type="application/ld\+json">)', f'{new_sticky_bar}\\g<1>', content)
+            # Fallback se non trova il disclaimer (vecchissimi articoli): usa metodo precedente
+            fallback_pattern = r'(<div id="rd-sticky-bar-container".*?)(<script type="application/ld\+json">)'
+            if re.search(fallback_pattern, content, re.DOTALL):
+                 content = re.sub(fallback_pattern, f'{new_sticky_bar}\\g<2>', content, flags=re.DOTALL)
+            else:
+                 content = re.sub(r'(<script type="application/ld\+json">)', f'{new_sticky_bar}\\g<1>', content)
 
         # Aggiornamenti Meta Standard
         content = re.sub(r'(Ultimo controllo: |Prezzo aggiornato al:\s?)(.*?)(\s*</p>|</span>)', f'\\g<1>{today}\\g<3>', content, flags=re.IGNORECASE)
@@ -170,7 +178,7 @@ document.addEventListener("DOMContentLoaded", function() {
         if content != original_content: 
             update_resp = requests.post(f"{WP_API_URL}/posts/{wp_post_id}", headers=headers, json={'content': content})
             if update_resp.status_code == 200:
-                log(f"      ✨ WP Aggiornato (ID: {wp_post_id}) -> € {new_str}")
+                log(f"      ✨ WP Aggiornato e RIPARATO (ID: {wp_post_id}) -> € {new_str}")
         
         return True
 
@@ -179,7 +187,7 @@ document.addEventListener("DOMContentLoaded", function() {
         return True
 
 def run_price_monitor():
-    log("🚀 MONITORAGGIO v17.4 (CLEAN SWEEP) AVVIATO...")
+    log("🚀 MONITORAGGIO v17.5 (SOUTH POLE REPAIR) AVVIATO...")
     while True:
         try:
             conn = mysql.connector.connect(**DB_CONFIG)
