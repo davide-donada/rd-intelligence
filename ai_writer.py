@@ -2,13 +2,11 @@ import os
 import json
 import requests
 from openai import OpenAI
-import statistics
-import random
 
 # Configurazione Client
 client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 
-# Fallback statico per le categorie
+# Fallback statico
 DEFAULT_MAP = {
     'Tecnologia': 1, 'Smartphone': 60, 'Informatica': 3454, 'Elettrodomestici': 3612
 }
@@ -33,84 +31,85 @@ CATEGORIES_MAP = get_live_categories()
 
 def genera_recensione_seo(product_data):
     title = product_data.get('title', 'Prodotto')
-    price = product_data.get('current_price', 'N/A')
     
-    print(f"   🧠 AI (Critico Severo) al lavoro su: {title}...")
+    # GESTIONE PREZZO INTELLIGENTE
+    raw_price = product_data.get('price', 0)
+    try:
+        price_val = float(raw_price)
+    except:
+        price_val = 0
+        
+    if price_val > 0:
+        price_str = f"€ {price_val:.2f}"
+        price_instruction = f"Il prezzo ATTUALE è {price_str}. BASA IL VOTO E IL GIUDIZIO 'RAPPORTO QUALITÀ/PREZZO' ESCLUSIVAMENTE SU QUESTO VALORE. Non scrivere MAI 'prezzo non disponibile' o 'non specificato'."
+    else:
+        price_str = "Non disponibile al momento"
+        price_instruction = "Il prezzo esatto non è disponibile al momento. STIMA il prezzo in base alle specifiche tecniche (fascia bassa, media o alta) e al brand per dare un giudizio verosimile. Non scrivere 'prezzo sconosciuto', scrivi 'considerando la fascia di mercato...'."
 
-    # PROMPT AGGIORNATO: LOGICA DI VOTO "CATTIVA"
     prompt_system = f"""
-    Sei un recensore tecnologico ESPERTO, SEVERO e IMPARZIALE per "RecensioneDigitale.it".
-    Il tuo compito NON è vendere il prodotto, ma analizzarlo criticamente.
+    Sei un recensore esperto di tecnologia e prodotti consumer per il sito RecensioneDigitale.it.
+    Il tuo compito è scrivere una recensione onesta, dettagliata e ottimizzata SEO per il prodotto specificato.
     
-    ANALISI DEL PREZZO: Il prodotto costa {price}€. 
-    - Se costa poco (<30€), la qualità costruttiva NON può essere 9. Sii realistico (es. 6.5 o 7.0).
-    - Se costa tanto, pretendi la perfezione.
+    DATI PRODOTTO:
+    Nome: {title}
+    {price_instruction}
     
-    GUIDA AI VOTI (Seguila rigorosamente):
-    - 5.0 - 6.9: Prodotto economico, "plasticoso", funzioni base o difetti evidenti. (NON AVER PAURA DI USARE QUESTI VOTI).
-    - 7.0 - 7.9: Prodotto nella media. Fa il suo dovere, ma non emoziona. "Buono ma non ottimo".
-    - 8.0 - 8.8: Ottimo prodotto. Solido, affidabile, consigliato.
-    - 9.0 - 10.0: Eccellenza assoluta, innovativo, materiali premium. (USARE RARAMENTE).
+    STRUTTURA OBBLIGATORIA (HTML):
+    1. Un paragrafo introduttivo (senza titolo "Introduzione") che riassume il prodotto e a chi è rivolto.
+    2. <h3>Design</h3>: Analisi estetica e materiali.
+    3. <h3>Prestazioni</h3>: Come si comporta nell'uso reale.
+    4. <h3>[Altra Caratteristica Rilevante]</h3>: Scegli tu (es. Display, Autonomia, Pulizia, Suono) in base al tipo di prodotto.
     
     REGOLE DI SCRITTURA:
-    1. Tono professionale, terza persona plurale ("Abbiamo testato...").
-    2. HTML pulito (<h2>, <h3>, <p>). Niente H1 o Prezzo nel testo.
-    3. FAQ REALI: 3 domande specifiche che un utente farebbe (es. "Durata batteria", "Rumorosità").
+    - Scrivi in ITALIANO perfetto.
+    - Usa la terza persona plurale ("Abbiamo testato", "La nostra opinione").
+    - Sii critico: non sembrare un comunicato stampa. Se il prodotto costa poco, aspettati difetti. Se costa tanto, pretendi perfezione.
+    - NON usare frasi come "In conclusione", "Tirando le somme".
+    - Lunghezza ideale: circa 400-500 parole.
     
-    OUTPUT JSON RICHIESTO:
+    OUTPUT RICHIESTO (JSON PURO):
+    Devi restituire UN SOLO oggetto JSON con questa struttura esatta:
     {{
-        "html_content": "<p>Intro...</p><h3>Design</h3><p>...</p>...",
-        "meta_description": "Massimo 150 caratteri.",
-        "category_name": "Una tra: {', '.join(CATEGORIES_MAP.keys())}",
-        "final_score": 0.0, // Lascia 0, lo calcoliamo noi.
+        "html_content": "Testo della recensione in HTML (paragrafi <p> e titoli <h3>)",
+        "meta_description": "Riassunto SEO di 150 caratteri per Google",
+        "category_name": "Una categoria pertinente (es. Smartphone, Audio, Casa, Cucina)",
+        "final_score": 8.5 (numero float da 0 a 10, basato rigorosamente sul rapporto qualità/prezzo di {price_str}),
         "pros": ["Pro 1", "Pro 2", "Pro 3"],
-        "cons": ["Difetto 1", "Difetto 2"],
+        "cons": ["Contro 1", "Contro 2"],
         "sub_scores": [
-            {{ "label": "Qualità Costruttiva", "value": 7.0 }}, // Varia in base al prezzo/materiali!
-            {{ "label": "Prestazioni", "value": 8.0 }},
+            {{ "label": "Qualità Costruttiva", "value": 8.0 }},
+            {{ "label": "Prestazioni", "value": 8.5 }},
             {{ "label": "Rapporto Qualità/Prezzo", "value": 7.5 }}
         ],
-        "verdict_badge": "Consigliato", // O "Economico", "Discreto", "Top", "Nella Media"
+        "verdict_badge": "Consigliato" (o "Best Buy", "Economico", "Top di Gamma", "Da Evitare" in base al voto),
         "faqs": [
-            {{ "question": "Domanda reale specifica?", "answer": "Risposta." }},
-            {{ "question": "Domanda reale?", "answer": "Risposta." }},
-            {{ "question": "Domanda reale?", "answer": "Risposta." }}
+            {{ "question": "Domanda pertinente 1?", "answer": "Risposta breve." }},
+            {{ "question": "Domanda pertinente 2?", "answer": "Risposta breve." }},
+            {{ "question": "Domanda pertinente 3?", "answer": "Risposta breve." }}
         ]
     }}
     """
+    
+    print(f"   🧠 AI sta scrivendo la recensione per: {title} (Prezzo: {price_str})...")
     
     try:
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": prompt_system},
-                {"role": "user", "content": f"Analizza: {title}. Prezzo: {price}€"}
+                {"role": "system", "content": "Sei un assistente editoriale JSON."},
+                {"role": "user", "content": prompt_system}
             ],
             response_format={"type": "json_object"},
-            temperature=0.7 # Un po' di creatività per variare i giudizi
+            temperature=0.7
         )
-        data = json.loads(response.choices[0].message.content)
+        content = response.choices[0].message.content
+        data = json.loads(content)
         
-        # --- CALCOLO MATEMATICO DEL VOTO ---
-        if 'sub_scores' in data and data['sub_scores']:
-            values = [float(item['value']) for item in data['sub_scores']]
-            real_avg = statistics.mean(values)
-            data['final_score'] = round(real_avg, 1)
-        else:
-            data['final_score'] = 7.5 # Fallback più basso di prima
-
-        # Determina il Badge in base al voto reale
-        score = data['final_score']
-        if score >= 9.0: data['verdict_badge'] = "Eccellente"
-        elif score >= 8.0: data['verdict_badge'] = "Consigliato"
-        elif score >= 7.0: data['verdict_badge'] = "Buono"
-        elif score >= 6.0: data['verdict_badge'] = "Economico"
-        else: data['verdict_badge'] = "Sconsigliato"
-
         # MAPPING CATEGORIA
         chosen_name = data.get('category_name', '')
         final_id = CATEGORIES_MAP.get(chosen_name)
         if not final_id:
+            # Ricerca fuzzy semplice
             for key, val in CATEGORIES_MAP.items():
                 if chosen_name.lower() in key.lower() or key.lower() in chosen_name.lower():
                     final_id = val
@@ -121,5 +120,17 @@ def genera_recensione_seo(product_data):
         return data
 
     except Exception as e:
-        print(f"   ❌ Errore OpenAI: {e}")
-        return None
+        print(f"   ❌ Errore AI: {e}")
+        # Return fallback data per non bloccare il sistema
+        return {
+            "html_content": f"<p>Descrizione non disponibile al momento per {title}.</p>",
+            "meta_description": f"Recensione {title}",
+            "category_name": "Generale",
+            "category_id": 1,
+            "final_score": 7.0,
+            "pros": [],
+            "cons": [],
+            "sub_scores": [],
+            "verdict_badge": "Standard",
+            "faqs": []
+        }
