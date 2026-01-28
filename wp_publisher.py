@@ -128,7 +128,7 @@ def analyze_price_history(product_id, current_price):
         return "✅ Prezzo Ottimo" if current < (sum(prices)/len(prices)) else "⚖️ Prezzo Stabile"
     except: return "⚖️ Monitoraggio avviato"
 
-# --- MAIN FORMATTER (FIX DESKTOP & MOBILE) ---
+# --- MAIN FORMATTER ---
 
 def format_article_html(product, local_image_url, ai_data):
     p_id, asin, title, price = product[0], product[1], product[2], product[3]
@@ -136,8 +136,6 @@ def format_article_html(product, local_image_url, ai_data):
     p_verdict = analyze_price_history(p_id, price)
     today_str = datetime.now().strftime('%d/%m/%Y')
     
-    # PULSE CSS + JS ENFORCER
-    # Lo script 'checkMobile' controlla la larghezza e nasconde brutalmente il titolo se < 768px
     extra_code = """
 <style>
 @keyframes pulse-orange { 0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 153, 0, 0.7); } 70% { transform: scale(1.03); box-shadow: 0 0 0 10px rgba(255, 153, 0, 0); } 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 153, 0, 0); } }
@@ -157,12 +155,11 @@ document.addEventListener("DOMContentLoaded", function() {
         }
     }
     window.addEventListener("resize", checkMobile);
-    checkMobile(); // Run on load
+    checkMobile();
 });
 </script>
 """
 
-    # HEADER
     badge_html = ""
     if ai_data.get('final_score', 0) >= 8.5:
         badge_html = '<div style="position: absolute; top: -10px; right: -10px; background: #ffd700; color: #000; font-weight: bold; padding: 5px 10px; border-radius: 4px; box-shadow: 0 2px 5px rgba(0,0,0,0.2); font-size: 0.8rem; z-index: 10;">🏆 SCELTA TOP</div>'
@@ -201,24 +198,18 @@ document.addEventListener("DOMContentLoaded", function() {
 
     faq = generate_faq_html(ai_data.get('faqs', []))
 
-    # STICKY BAR:
-    # 1. Outer Container (Fisso, width 100%)
-    # 2. Inner Wrapper (Max Width 1100px, centrato)
-    # 3. Title (Con ID per essere intercettato da JS)
+    # STICKY BAR with MARKERS
     sticky_bar = f"""
-    <div id="rd-sticky-bar-container" style="position: fixed !important; bottom: 0 !important; left: 0 !important; width: 100% !important; background: #ffffff !important; box-shadow: 0 -2px 10px rgba(0,0,0,0.1) !important; z-index: 2147483647 !important; border-top: 3px solid #ff9900 !important; padding: 0 !important;">
-        <div style="max-width: 1100px !important; margin: 0 auto !important; padding: 10px 20px !important; display: flex !important; justify-content: space-between !important; align-items: center !important;">
-            
-            <div id="rd-sticky-title-id" style="font-weight:bold !important; color:#333 !important; max-width: 60% !important; white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; font-family: sans-serif !important; font-size: 1rem !important; margin: 0 !important;">{title}</div>
-            
-            <div style="display:flex !important; align-items:center !important; margin: 0 !important; margin-left: auto !important;">
-                <span class="rd-sticky-price" style="font-size: 1.2rem !important; font-weight: bold !important; color: #b12704 !important; margin-right: 15px !important; white-space: nowrap !important;">€ {price}</span>
-                <a href="{aff_link}" target="_blank" rel="nofollow noopener sponsored" style="background: #ff9900 !important; color: #ffffff !important; padding: 10px 20px !important; text-decoration: none !important; border-radius: 4px !important; font-weight: bold !important; text-transform: uppercase !important; font-size: 0.9rem !important; border: none !important; box-shadow: none !important; white-space: nowrap !important;">Vedi Offerta</a>
-            </div>
-            
+<div id="rd-sticky-bar-container" style="position: fixed !important; bottom: 0 !important; left: 0 !important; width: 100% !important; background: #ffffff !important; box-shadow: 0 -2px 10px rgba(0,0,0,0.1) !important; z-index: 2147483647 !important; border-top: 3px solid #ff9900 !important; padding: 0 !important;">
+    <div style="max-width: 1100px !important; margin: 0 auto !important; padding: 10px 20px !important; display: flex !important; justify-content: space-between !important; align-items: center !important;">
+        <div id="rd-sticky-title-id" style="font-weight:bold !important; color:#333 !important; max-width: 60% !important; white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; font-family: sans-serif !important; font-size: 1rem !important; margin: 0 !important;">{title}</div>
+        <div style="display:flex !important; align-items:center !important; margin: 0 !important; margin-left: auto !important;">
+            <span class="rd-sticky-price" style="font-size: 1.2rem !important; font-weight: bold !important; color: #b12704 !important; margin-right: 15px !important; white-space: nowrap !important;">€ {price}</span>
+            <a href="{aff_link}" target="_blank" rel="nofollow noopener sponsored" style="background: #ff9900 !important; color: #ffffff !important; padding: 10px 20px !important; text-decoration: none !important; border-radius: 4px !important; font-weight: bold !important; text-transform: uppercase !important; font-size: 0.9rem !important; border: none !important; box-shadow: none !important; white-space: nowrap !important;">Vedi Offerta</a>
         </div>
     </div>
-    """
+</div>
+"""
 
     disclaimer = """<p style="font-size:0.7rem; color:#999; margin-top:50px; text-align:center; border-top:1px solid #eee; padding-top:15px;"><em>In qualità di Affiliato Amazon, riceviamo un guadagno dagli acquisti idonei.</em></p>"""
     

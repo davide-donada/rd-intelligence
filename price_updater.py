@@ -78,7 +78,7 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_t
         affiliate_url = f"https://www.amazon.it/dp/{asin}?tag={AMAZON_TAG}"
         clean_img = clean_amazon_image_url(image_url)
 
-        # STILI E JS (Inline con Mobile Enforcer)
+        # STILI E JS (Inline)
         extra_code = """
 <style>
 @keyframes pulse-orange { 0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 153, 0, 0.7); } 70% { transform: scale(1.03); box-shadow: 0 0 0 10px rgba(255, 153, 0, 0); } 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 153, 0, 0); } }
@@ -126,23 +126,19 @@ document.addEventListener("DOMContentLoaded", function() {
 </div>
 """
 
-        # Sticky Bar Wrapper + ID Titolo + Mobile Fix
         new_sticky_bar = f"""
 <div id="rd-sticky-bar-container" style="position: fixed !important; bottom: 0 !important; left: 0 !important; width: 100% !important; background: #ffffff !important; box-shadow: 0 -2px 10px rgba(0,0,0,0.1) !important; z-index: 2147483647 !important; border-top: 3px solid #ff9900 !important; padding: 0 !important;">
     <div style="max-width: 1100px !important; margin: 0 auto !important; padding: 10px 20px !important; display: flex !important; justify-content: space-between !important; align-items: center !important;">
-        
         <div id="rd-sticky-title-id" style="font-weight:bold !important; color:#333 !important; max-width: 60% !important; white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; font-family: sans-serif !important; font-size: 1rem !important; margin: 0 !important;">{product_title}</div>
-        
         <div style="display:flex !important; align-items:center !important; margin: 0 !important; margin-left: auto !important;">
             <span class="rd-sticky-price" style="font-size: 1.2rem !important; font-weight: bold !important; color: #b12704 !important; margin-right: 15px !important; white-space: nowrap !important;">€ {new_str}</span>
             <a href="{affiliate_url}" target="_blank" rel="nofollow noopener sponsored" style="background: #ff9900 !important; color: #ffffff !important; padding: 10px 20px !important; text-decoration: none !important; border-radius: 4px !important; font-weight: bold !important; text-transform: uppercase !important; font-size: 0.9rem !important; border: none !important; box-shadow: none !important; white-space: nowrap !important;">Vedi Offerta</a>
         </div>
-        
     </div>
 </div>
 """
 
-        # Sostituzione Header
+        # 1. HEADER REPLACEMENT
         flex_pattern = r'(?:<style>.*?</style>\s*|.*<script>.*?</script>\s*)?<div style="background-color: #fff; border: 1px solid #e1e1e1;[^>]*>.*?Ultimo controllo:.*?</p>(?:\s*</div>)+'
         old_pattern = r'<div style="text-align: center;">.*?Prezzo aggiornato al:.*?</div>(?:\s*</div>)*'
 
@@ -153,17 +149,21 @@ document.addEventListener("DOMContentLoaded", function() {
         else:
             content = new_header_block + content
 
-        # Sostituzione Sticky Bar
-        sticky_pattern = r'<div id="rd-sticky-bar-container".*?</div>(?:\s*<style>.*?</style>)?(?:\s*</div>)?'
-        old_sticky_pattern = r'<div class="rd-sticky-bar">.*?</div>'
-
-        if re.search(sticky_pattern, content, re.DOTALL):
-            content = re.sub(sticky_pattern, new_sticky_bar, content, flags=re.DOTALL)
-        elif re.search(old_sticky_pattern, content, re.DOTALL):
-            content = re.sub(old_sticky_pattern, new_sticky_bar, content, flags=re.DOTALL)
+        # 2. STICKY BAR CLEAN SWEEP REPLACEMENT
+        # Cerca dall'inizio del vecchio container (o duplicati) fino allo script schema.
+        # Questo elimina tutto il "garbage" accumulato tra la fine dell'articolo e lo script JSON-LD.
+        
+        # Pattern A: Se trova il container con ID (anche rotto/duplicato)
+        clean_sweep_pattern = r'(<div id="rd-sticky-bar-container".*?)(<script type="application/ld\+json">)'
+        
+        if re.search(clean_sweep_pattern, content, re.DOTALL):
+            # Sostituisce tutto il blocco marcio con la nuova barra pulita + lo script schema originale (gruppo 2)
+            content = re.sub(clean_sweep_pattern, f'{new_sticky_bar}\\g<2>', content, flags=re.DOTALL)
         else:
-            content = content + new_sticky_bar
+            # Fallback: Se non trova l'ID (vecchissimi articoli), lo appende prima dello script schema
+            content = re.sub(r'(<script type="application/ld\+json">)', f'{new_sticky_bar}\\g<1>', content)
 
+        # Aggiornamenti Meta Standard
         content = re.sub(r'(Ultimo controllo: |Prezzo aggiornato al:\s?)(.*?)(\s*</p>|</span>)', f'\\g<1>{today}\\g<3>', content, flags=re.IGNORECASE)
         content = re.sub(r'("price":\s?")([\d\.]+)(",)', f'\\g<1>{new_str}\\g<3>', content)
 
@@ -179,7 +179,7 @@ document.addEventListener("DOMContentLoaded", function() {
         return True
 
 def run_price_monitor():
-    log("🚀 MONITORAGGIO v17.3 (MOBILE ENFORCER) AVVIATO...")
+    log("🚀 MONITORAGGIO v17.4 (CLEAN SWEEP) AVVIATO...")
     while True:
         try:
             conn = mysql.connector.connect(**DB_CONFIG)
