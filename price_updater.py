@@ -41,7 +41,7 @@ def clean_amazon_image_url(url):
 def get_amazon_data(asin):
     url = f"https://www.amazon.it/dp/{asin}?th=1&psc=1"
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
         "Accept-Language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
     }
@@ -77,7 +77,7 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_t
         content = post_data['content']['raw']
         original_content = content
 
-        # Logica Prezzi
+        # Dati Prezzo
         new_str = f"{new_price:.2f}"
         diff = new_price - float(old_price)
         status_text = deal_label if deal_label else (f"📉 Ribasso di € {abs(diff):.2f}" if diff < -0.01 else (f"📈 Rialzo di € {abs(diff):.2f}" if diff > 0.01 else "⚖️ Prezzo Stabile"))
@@ -85,7 +85,11 @@ def update_wp_post_price(wp_post_id, old_price, new_price, deal_label, product_t
         affiliate_url = f"https://www.amazon.it/dp/{asin}?tag={AMAZON_TAG}"
         clean_img = clean_amazon_image_url(image_url)
 
-        # --- BLOCCHI HTML ---
+        # --- INTELLIGENZA IBRIDA ---
+        # Se c'è 'rd-review-box' o lo span specifico, è una recensione PRO.
+        is_pro_review = 'class="rd-review-box"' in content or 'rd-live-price' in content
+
+        # --- DEFINIZIONE BLOCCHI HTML ---
         styles_scripts = """
 <style>
 @keyframes pulse-orange { 0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 153, 0, 0.7); } 70% { transform: scale(1.03); box-shadow: 0 0 0 10px rgba(255, 153, 0, 0); } 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 153, 0, 0); } }
@@ -145,66 +149,75 @@ document.addEventListener("DOMContentLoaded", function() {
 </div>
 """
 
-        # --- FASE 1: PULIZIA AGGRESSIVA (GHOSTBUSTERS) ---
-        
-        # A. CSS/JS
-        content = re.sub(r'<style>.*?</style>', '', content, flags=re.DOTALL)
-        content = re.sub(r'<script>.*?</script>', '', content, flags=re.DOTALL)
-        
-        # B. Rimuovi Header duplicati (Pattern esteso per catturare varianti)
-        header_patterns = [
-            r'<div style="background-color: #fff; border: 1px solid #e1e1e1;.*?Ultimo controllo:.*?</p>\s*</div>\s*</div>',
-            r'<div style="[^"]*background-color: #fff[^"]*".*?Ultimo controllo:.*?</p>\s*</div>(?:\s*</div>)?',
-            r'<div style="text-align: center;">.*?Prezzo aggiornato al:.*?</div>(?:\s*</div>)*'
-        ]
-        for pattern in header_patterns:
-            while re.search(pattern, content, re.DOTALL):
-                content = re.sub(pattern, '', content, count=1, flags=re.DOTALL)
+        # === RAMO 1: RECENSIONI STANDARD (Pulizia Aggressiva + Header Classico) ===
+        if not is_pro_review:
+            # Pulizia stili e script vecchi
+            content = re.sub(r'<style>.*?</style>', '', content, flags=re.DOTALL)
+            content = re.sub(r'<script>.*?</script>', '', content, flags=re.DOTALL)
+            
+            # Rimozione vecchi header duplicati
+            header_patterns = [
+                r'<div style="background-color: #fff; border: 1px solid #e1e1e1;.*?Ultimo controllo:.*?</p>\s*</div>\s*</div>',
+                r'<div style="[^"]*background-color: #fff[^"]*".*?Ultimo controllo:.*?</p>\s*</div>(?:\s*</div>)?',
+                r'<div style="text-align: center;">.*?Prezzo aggiornato al:.*?</div>(?:\s*</div>)*'
+            ]
+            for pattern in header_patterns:
+                while re.search(pattern, content, re.DOTALL):
+                    content = re.sub(pattern, '', content, count=1, flags=re.DOTALL)
+            
+            # Inserimento Header Standard in cima
+            content = new_header_block + content
 
-        # C. Rimuovi i FANTASMI (Frammenti orfani della sticky bar)
-        # Questa regex cerca div che hanno 'display: flex !important' e 'rd-sticky-price' ma NON hanno un ID contenitore.
+        # === COMUNE A TUTTI: GESTIONE FOOTER & STICKY BAR ===
+        
+        # Rimuovi vecchie sticky bar (fantasmi o ufficiali) per evitare duplicati
         ghost_pattern = r'<div style="display:\s*flex\s*!important;\s*align-items:\s*center\s*!important;[^>]*>\s*<span class="rd-sticky-price".*?</div>'
         while re.search(ghost_pattern, content, re.DOTALL):
             content = re.sub(ghost_pattern, '', content, count=1, flags=re.DOTALL)
-
-        # D. Rimuovi Sticky Bar Ufficiali (in Loop)
+        
         official_sticky = r'(?:\s*)?<div id="rd-sticky-bar-container".*?</div>(?:\s*)?'
         while re.search(official_sticky, content, re.DOTALL):
              content = re.sub(official_sticky, '', content, count=1, flags=re.DOTALL)
 
-
-        # E. Footer Clean-Up (Ancoraggio al testo "In qualità di Affiliato...")
-        # Usa il testo come ancora, non i tag HTML che possono cambiare.
-        # Cancella TUTTO da quel testo fino allo script JSON.
+        # Inserisci la Nuova Sticky Bar nel Footer (usando il disclaimer come ancora)
         footer_anchor_regex = r'(In qualità di Affiliato Amazon.*?</em></p>)(.*)(<script type="application/ld\+json">)'
-        
         match = re.search(footer_anchor_regex, content, re.DOTALL)
         if match:
-            # Se trova l'ancora, Pialla tutto il mezzo (Gruppo 2) e sostituisci con nuova bar
-            # Il gruppo 2 contiene tutto lo sporco accumulato.
+            # Sostituisce tutto quello che c'è tra il disclaimer e lo schema JSON con la nuova sticky bar
             content = re.sub(footer_anchor_regex, f'\\g<1>{new_sticky_bar}\\g<3>', content, flags=re.DOTALL)
         else:
-            # Se NON trova l'ancora (caso raro), appendi in fondo prima dello script
+            # Fallback se regex fallisce
             if '<script type="application/ld+json">' in content:
                 content = content.replace('<script type="application/ld+json">', new_sticky_bar + '\n<script type="application/ld+json">')
             else:
                 content = content + new_sticky_bar
 
-        # --- FASE 2: RICOSTRUZIONE ---
-        content = new_header_block + content
+        # === RAMO 2: RECENSIONI PRO (Aggiornamento Chirurgico del Prezzo nel Testo) ===
+        if is_pro_review:
+            # Cerca lo span con la classe rd-live-price e l'asin corretto, e aggiorna il testo dentro
+            # Regex: <span class="rd-live-price" ... data-asin="XYZ" ...>VECCHIO</span>
+            # La aggiorniamo con: >€ NUOVO<
+            price_regex = r'(<span class="rd-live-price"[^>]*data-asin="[^"]*"[^>]*>)(.*?)(</span>)'
+            content = re.sub(price_regex, f'\\g<1>€ {new_str}\\g<3>', content)
 
-        # Metadata Update
+        # === AGGIORNAMENTI METADATI (Comuni) ===
+        # Aggiorna date "Ultimo controllo" ovunque
         content = re.sub(r'(Ultimo controllo: |Prezzo aggiornato al:\s?)(.*?)(\s*</p>|</span>)', f'\\g<1>{today}\\g<3>', content, flags=re.IGNORECASE)
+        
+        # Aggiorna Prezzo nello Schema.org JSON
         content = re.sub(r'("price":\s?")([\d\.]+)(",)', f'\\g<1>{new_str}\\g<3>', content)
+        content = re.sub(r'("price":\s)([\d\.]+)(,)', f'\\g<1>{new_str}\\g<3>', content)
 
+        # === INVIO A WP SE CAMBIATO ===
         if content != original_content: 
-            log(f"      🔧 Rilevato sporco/modifiche per ID: {wp_post_id}...")
+            type_label = "PRO" if is_pro_review else "STD"
+            log(f"      🔧 [{type_label}] Aggiornamento eseguito per ID: {wp_post_id}...")
             update_resp = requests.post(f"{WP_API_URL}/posts/{wp_post_id}", headers=headers, json={'content': content})
             if update_resp.status_code == 200:
-                log(f"      ✨ WP PULITO E AGGIORNATO (ID: {wp_post_id}). Pausa {SLEEP_AFTER_UPDATE}s...")
+                log(f"      ✨ WP Aggiornato. Pausa {SLEEP_AFTER_UPDATE}s...")
                 return True
             else:
-                log(f"      ⚠️ Errore aggiornamento WP: {update_resp.status_code}")
+                log(f"      ⚠️ Errore API WP: {update_resp.status_code}")
                 return False
         else:
             return False
@@ -214,7 +227,7 @@ document.addEventListener("DOMContentLoaded", function() {
         return False
 
 def run_price_monitor():
-    log("🚀 MONITORAGGIO v18.1 (GHOSTBUSTERS) AVVIATO...")
+    log("🚀 MONITORAGGIO v19.0 (HYBRID) AVVIATO...")
     while True:
         try:
             conn = mysql.connector.connect(**DB_CONFIG)
