@@ -45,6 +45,15 @@ def decode_mime_words(s):
     if not s: return ""
     return u''.join(word.decode(encoding or 'utf-8') if isinstance(word, bytes) else word for word, encoding in decode_header(s))
 
+def list_all_folders(mail):
+    """Diagnostica: Stampa tutte le cartelle disponibili sul server"""
+    print("\n--- DIAGNOSI CARTELLE DISPONIBILI ---")
+    status, folders = mail.list()
+    if status == 'OK':
+        for f in folders:
+            print(f" > {f.decode('utf-8')}")
+    print("-------------------------------------\n")
+
 def get_all_wp_categories():
     categories = {}
     page = 1
@@ -99,6 +108,9 @@ def extract_images_from_doc(filepath):
                             extracted_paths.append(dest)
         elif ext == '.pdf':
             import fitz 
+            # Silenzia i warning fastidiosi ("Ignoring wrong pointing object") dei PDF non standard
+            fitz.TOOLS.mupdf_display_errors(False) 
+            
             doc = fitz.open(filepath)
             for i in range(len(doc)):
                 for img in doc.get_page_images(i):
@@ -166,7 +178,7 @@ def generate_presentation_content(product_name, notes, cat_list, photo_urls):
     
     STRUTTURA JSON:
     - seo_title, selected_cat (una tra {cat_names}), meta_desc, intro,
-    - sections (lista 5 oggetti: title, content, suggested_image_url, image_alt), faqs (lista 3 oggetti).
+    - sections (lista 5 oggetti: title, content, suggested_image_url, image_alt), faqs (lista 3 oggetti: q, a).
     
     Note: '{notes}'.
     """
@@ -182,22 +194,43 @@ def generate_presentation_content(product_name, notes, cat_list, photo_urls):
 
 def build_presentation_html(data, user_images, product_name):
     head_code = "<style>.rd-article-content h3 { position: relative; padding-left: 18px; border-left: 5px solid #ff9900; background: linear-gradient(90deg, #fffaf0 0%, #ffffff 100%); font-size: 1.6rem; font-weight: 800; color: #1a202c; margin-top: 50px; margin-bottom: 25px; padding-top: 10px; padding-bottom: 10px; border-radius: 0 8px 8px 0; }</style>"
-    content_html = f'<div class="rd-article-content"><p>{format_text_to_html(data["intro"])}</p>'
+    
+    # Paracadute intro
+    intro_text = data.get("intro", "")
+    content_html = f'<div class="rd-article-content"><p>{format_text_to_html(intro_text)}</p>'
     used = []
+    
     for sec in data.get('sections', []):
+        if not isinstance(sec, dict): continue # Salta se l'AI impazzisce e non crea un dizionario
+        
+        # Paracadute per le chiavi del json
+        sec_title = sec.get("title", "Caratteristiche")
+        sec_content = sec.get("content", "")
         img_url = sec.get('suggested_image_url', '').strip()
+        img_alt = sec.get("image_alt", sec_title).replace('"', "'")
+        
         img_tag = ""
         if img_url and img_url in user_images and img_url not in used:
-            img_tag = f'<img src="{img_url}" style="width: 100%; border-radius: 12px; margin: 30px 0; display: block; box-shadow: 0 4px 20px rgba(0,0,0,0.06);" alt="{sec.get("image_alt", "")}">'
+            img_tag = f'<img src="{img_url}" style="width: 100%; border-radius: 12px; margin: 30px 0; display: block; box-shadow: 0 4px 20px rgba(0,0,0,0.06);" alt="{img_alt}">'
             used.append(img_url)
-        content_html += f'<h3>{sec["title"]}</h3>{img_tag}<p>{format_text_to_html(sec["content"])}</p>'
+        content_html += f'<h3>{sec_title}</h3>{img_tag}<p>{format_text_to_html(sec_content)}</p>'
     
     remaining = [i for i in user_images if i not in used]
     if remaining:
         gallery = "".join([f'<img src="{i}" style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.05);">' for i in remaining])
         content_html += f'<h3>Galleria Immagini</h3><div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-top: 20px; margin-bottom: 40px;">{gallery}</div>'
     
-    faqs = "".join([f"<details style='margin-bottom: 15px; border: 1px solid #e2e8f0; border-radius: 10px; padding: 15px 25px; background: #ffffff;'><summary style='font-weight: 700; cursor: pointer; color: #1e293b; outline: none; font-size: 1.1rem;'>{f['q']}</summary><div style='margin-top: 15px; color: #475569; line-height: 1.7; border-top: 1px solid #f1f5f9; padding-top: 15px;'>{f['a']}</div></details>" for f in data.get('faqs', [])])
+    # Paracadute per le FAQ (Gestione dell'errore 'q')
+    faqs_html_list = []
+    for f in data.get('faqs', []):
+        if isinstance(f, dict):
+            # Se manca 'q' o 'a', usa stringhe vuote invece di andare in errore
+            q_text = f.get('q', f.get('question', f.get('domanda', 'Domanda')))
+            a_text = f.get('a', f.get('answer', f.get('risposta', '')) )
+            
+            faqs_html_list.append(f"<details style='margin-bottom: 15px; border: 1px solid #e2e8f0; border-radius: 10px; padding: 15px 25px; background: #ffffff;'><summary style='font-weight: 700; cursor: pointer; color: #1e293b; outline: none; font-size: 1.1rem;'>{q_text}</summary><div style='margin-top: 15px; color: #475569; line-height: 1.7; border-top: 1px solid #f1f5f9; padding-top: 15px;'>{a_text}</div></details>")
+            
+    faqs = "".join(faqs_html_list)
     faq_wrapper = f'<div class="rd-article-content"><h3>Domande Frequenti</h3>{faqs}</div>' if faqs else ""
     
     return f"{head_code}{content_html}</div>{faq_wrapper}"
@@ -265,9 +298,12 @@ def process_emails():
                 ai_data = generate_presentation_content(p_name, final_notes, cat_list, wp_image_urls)
                 html = build_presentation_html(ai_data, wp_image_urls, p_name)
                 
+                # Paracadute per il SEO Title (se mancante)
+                seo_title = ai_data.get('seo_title', f"{p_name}: La nostra presentazione")
+                
                 slug = f"presentazione-{re.sub(r'[^a-z0-9]+', '-', p_name.lower()).strip('-')}"
                 payload = {
-                    'title': ai_data['seo_title'], 
+                    'title': seo_title, 
                     'content': html, 
                     'status': 'draft', 
                     'categories': [cat_list.get(ai_data.get('selected_cat'), 1)], 
@@ -292,7 +328,7 @@ def process_emails():
         print(f"❌ Errore connessione IMAP: {e}")
 
 if __name__ == "__main__":
-    print(f"🚀 Email Bot v92.0 attivo (Python {sys.version.split()[0]})")
+    print(f"🚀 Email Bot v93.0 attivo (Python {sys.version.split()[0]})")
     while True:
         process_emails()
         print("💤 In attesa 10 minuti per il prossimo controllo...")
