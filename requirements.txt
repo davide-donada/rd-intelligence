@@ -5,4 +5,5 @@ mysql-connector-python
 openai
 youtube-search-python
 curl_cffi
-pypdf python-docx
+pypdf
+python-docx
