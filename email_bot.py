@@ -85,7 +85,7 @@ def search_smart_media_on_wp(queries):
         except: pass
     return results
 
-# --- ESTRAZIONE TESTO E CONTROLLI ---
+# --- ESTRAZIONE TESTO E METADATI ---
 
 def extract_text_from_file(filepath):
     ext = os.path.splitext(filepath)[1].lower()
@@ -107,27 +107,31 @@ def extract_text_from_file(filepath):
     return text.encode('utf-8', 'surrogateescape').decode('utf-8', 'ignore')
 
 def is_valid_press_release(subject, body):
-    prompt = f"Oggetto: {subject}\ncorpo: {body[:800]}\n\nQuesto testo è un comunicato stampa o news tech? Rispondi SOLO 'SI' o 'NO'."
+    prompt = f"Oggetto: {subject}\ncorpo: {body[:800]}\n\nQuesto testo è un comunicato stampa, news o guida? Rispondi SOLO 'SI' o 'NO'."
     try:
         response = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}], max_tokens=5)
         return "SI" in response.choices[0].message.content.upper()
     except: return True
 
-def extract_product_name(subject):
-    prompt = f"Oggetto: {subject}\nEstrai il nome del prodotto/brand principale (max 3 parole). Solo il nome."
+def extract_article_metadata(subject, body):
+    prompt = f"""Oggetto: {subject}\nCorpo: {body[:800]}\n
+    Classifica questo contenuto. Estrai:
+    1. 'topic': Il nome del prodotto o l'argomento principale (max 3 parole, es. 'Caro Carburante' o 'Samsung T7').
+    2. 'article_type': Scegli ESATTAMENTE una tra: 'presentazione' (lancio nuovo prodotto), 'guida' (consigli, tutorial, lifestyle), 'news' (eventi, dati aziendali), 'anteprima'.
+    Rispondi SOLO con JSON: {{"topic": "...", "article_type": "..."}}"""
     try:
-        response = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}], max_tokens=20)
-        return response.choices[0].message.content.strip()
-    except: return "Nuovo Prodotto"
+        response = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"})
+        return json.loads(response.choices[0].message.content)
+    except: return {"topic": "Novità", "article_type": "news"}
 
-# --- LOGICA AI (GOD MODE CON ANTI-BAN) ---
+# --- LOGICA AI (DINAMICA) ---
 
-def generate_presentation_content(product_name, notes, cat_list, photo_urls):
+def generate_presentation_content(topic, article_type, notes, cat_list, photo_urls):
     cat_names = ", ".join(list(cat_list.keys()))
     
     prompt = f"""
-    Sei il caporedattore tech di RecensioneDigitale.it. Scrivi una PRESENTAZIONE giornalistica PREMIUM su '{product_name}'.
-    Usa la terza persona plurale e uno stile editoriale da testata tech autorevole.
+    Sei il caporedattore tech di RecensioneDigitale.it. Scrivi un articolo formato '{article_type.upper()}' su '{topic}'.
+    Usa la terza persona plurale e uno stile editoriale idoneo al tipo di contenuto (es. divulgativo se è una guida, tecnico se è una presentazione).
     
     REGOLE FOTO (VISION):
     - 'suggested_image_url': inserisci l'URL della foto che descrive MEGLIO quel paragrafo guardando le foto fornite.
@@ -135,11 +139,11 @@ def generate_presentation_content(product_name, notes, cat_list, photo_urls):
 
     REGOLE EDITORIALI:
     - sections: 5 Sezioni con paragrafi da 80-120 parole. 3-5 grassetti (**) a sezione.
-    - intro: DEVE avere in grassetto Brand e Prodotto.
+    - intro: DEVE avere in grassetto l'argomento principale ('{topic}').
     - faqs: ESATTAMENTE 3 domande e risposte.
-    - price: Trova il prezzo nel comunicato (es. 79,99€). Se non c'è scrivi 'Vedi Prezzo'.
-    - specs: Estrai i dati tecnici (es. peso, risoluzione, batteria) in una lista di max 8 oggetti. 'k' è il nome (es. Autonomia), 'v' è il valore (es. 50 ore). Se non ci sono dati, lascia vuoto.
-    - quote: Trova un virgolettato (citazione del CEO o PR). Compila 'text' con la frase e 'author' col nome. Altrimenti lascia vuoto.
+    - price: Se è un prodotto fisico trova il prezzo (es. 79,99€). Se è una guida, un servizio o non c'è prezzo, scrivi ESATTAMENTE 'N/A'.
+    - specs: Se è un prodotto, estrai dati tecnici (k, v). Se è una guida o non ha dati tecnici strutturabili, lascia la lista vuota.
+    - quote: Trova un virgolettato pertinente. Compila 'text' con la frase e 'author' col nome. Altrimenti lascia vuoto.
     
     STRUTTURA JSON: seo_title, selected_cat (tra {cat_names}), meta_desc, intro, price, specs (lista di oggetti k, v), quote (oggetto text, author), sections (title, content, suggested_image_url, image_alt), faqs.
     
@@ -148,12 +152,10 @@ def generate_presentation_content(product_name, notes, cat_list, photo_urls):
 
     content_payload = [{"type": "text", "text": prompt}]
     
-    # 🛡️ LIMITE TOKEN: Guardiamo fisicamente solo le prime 4 foto. Le altre vanno in galleria automaticamente.
     for url in photo_urls[:4]:
         content_payload.append({"type": "text", "text": f"URL FOTO: {url}"})
         content_payload.append({"type": "image_url", "image_url": {"url": url}})
             
-    # 🛡️ GESTIONE RATE LIMIT (ANTI-CRASH)
     max_retries = 3
     for attempt in range(max_retries):
         try:
@@ -165,29 +167,28 @@ def generate_presentation_content(product_name, notes, cat_list, photo_urls):
             return json.loads(response.choices[0].message.content)
         except Exception as e:
             if "429" in str(e) or "rate_limit" in str(e).lower():
-                print(f"   ⚠️ Limite token OpenAI raggiunto. Respiro per 20 secondi... (Tentativo {attempt+1}/{max_retries})")
+                print(f"   ⚠️ Limite token raggiunto. Respiro per 20 secondi... (Tentativo {attempt+1}/{max_retries})")
                 time.sleep(20)
             else:
                 print(f"   ❌ Errore AI: {e}")
                 break
-    
-    # Se fallisce 3 volte, restituisce un JSON vuoto per non far esplodere il programma
     return {}
 
-# --- COSTRUZIONE HTML (LAYOUT PREMIUM) ---
+# --- COSTRUZIONE HTML (LAYOUT ADATTIVO) ---
 
-def build_presentation_html(data, image_urls, product_name, yt_embed_code):
-    if not data: return "<p>Errore di generazione testo.</p>" # Fallback
+def build_presentation_html(data, image_urls, topic, yt_embed_code):
+    if not data: return "<p>Errore di generazione testo.</p>" 
     
-    price_val = data.get("price", "Vedi Prezzo")
-    if price_val.strip() == "": price_val = "Vedi Prezzo"
-    if "€" not in price_val and any(char.isdigit() for char in price_val): price_val = f"€ {price_val}"
+    price_val = data.get("price", "N/A")
+    has_price = price_val != "N/A" and price_val.strip() != ""
+    if has_price and "€" not in price_val and any(char.isdigit() for char in price_val): price_val = f"€ {price_val}"
     
     hero_img = image_urls[0] if image_urls else ""
     current_date = datetime.now().strftime("%d/%m/%Y")
-    search_query = urllib.parse.quote(product_name)
+    search_query = urllib.parse.quote(topic)
     amazon_link = f"https://www.amazon.it/s?k={search_query}&tag={AMAZON_TAG}"
     
+    btn_text = "Vedi Offerta su Amazon" if has_price else "Cerca su Amazon"
     btn_style = "background: linear-gradient(135deg, #ff9900 0%, #ffb84d 100%) !important; color: #ffffff !important; padding: 16px 45px !important; border-radius: 50px !important; text-decoration: none !important; font-weight: 800 !important; text-transform: uppercase !important; display: inline-block !important; font-size: 1.05rem !important; box-shadow: 0 4px 15px rgba(255, 153, 0, 0.35) !important; border: none !important; letter-spacing: 0.5px !important; line-height: normal !important;"
 
     head_code = """
@@ -196,13 +197,16 @@ def build_presentation_html(data, image_urls, product_name, yt_embed_code):
     @media (max-width: 768px) { .rd-box-responsive { padding: 15px !important; } .rd-mobile-reset { min-width: 0 !important; width: 100% !important; flex: 0 0 100% !important; max-width: 100% !important; box-sizing: border-box !important; } .rd-hero-content-col { text-align: center !important; padding-left: 0 !important; } .rd-hero-price-row { justify-content: center !important; } .rd-cta-button { padding: 14px 20px !important; width: auto !important; max-width: 100% !important; white-space: normal !important; } }
     </style>"""
 
+    # Rendering dinamico del blocco prezzo
+    price_html = f"<div class='rd-hero-price-row' style='display: flex; flex-wrap: wrap; align-items: center; gap: 15px; margin-bottom: 25px;'><div style='font-size: 2.6rem; color: #b12704; font-weight: 900; letter-spacing: -1px;'>{price_val}</div></div>" if has_price else "<div style='margin-bottom: 20px;'></div>"
+
     top_box = f"""
     <div class="rd-box-responsive" style="box-sizing: border-box !important; max-width: 800px; margin: 0 auto 40px auto; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 16px; padding: 35px !important; display: flex; flex-wrap: wrap; align-items: center; box-shadow: 0 10px 30px rgba(0,0,0,0.04); gap: 40px;">
-        <div class="rd-mobile-reset" style="flex: 1 1 250px; text-align: center;"><a href="{amazon_link}" target="_blank" rel="nofollow noopener sponsored"><img style="max-height: 250px; width: auto; object-fit: contain; mix-blend-mode: multiply; max-width: 100%;" src="{hero_img}" alt="{product_name}" /></a></div>
+        <div class="rd-mobile-reset" style="flex: 1 1 250px; text-align: center;"><a href="{amazon_link}" target="_blank" rel="nofollow noopener sponsored"><img style="max-height: 250px; width: auto; object-fit: contain; mix-blend-mode: multiply; max-width: 100%;" src="{hero_img}" alt="{topic}" /></a></div>
         <div class="rd-hero-content-col rd-mobile-reset" style="flex: 1 1 300px; text-align: left; padding-left: 20px;">
-            <h2 style="margin-top: 0; font-size: 1.8rem; color: #1a202c; line-height: 1.25; font-weight: 800; margin-bottom: 20px;">{product_name}</h2>
-            <div class="rd-hero-price-row" style="display: flex; flex-wrap: wrap; align-items: center; gap: 15px; margin-bottom: 25px;"><div style="font-size: 2.6rem; color: #b12704; font-weight: 900; letter-spacing: -1px;">{price_val}</div></div>
-            <a href="{amazon_link}" target="_blank" rel="nofollow noopener sponsored" class="rd-cta-button" style="{btn_style}">Vedi Offerta su Amazon</a>
+            <h2 style="margin-top: 0; font-size: 1.8rem; color: #1a202c; line-height: 1.25; font-weight: 800; margin-bottom: 20px;">{topic}</h2>
+            {price_html}
+            <a href="{amazon_link}" target="_blank" rel="nofollow noopener sponsored" class="rd-cta-button" style="{btn_style}">{btn_text}</a>
             <p style="font-size: 0.8rem; color: #94a3b8; margin-top: 15px;">Ultimo aggiornamento: {current_date}</p>
         </div>
     </div>"""
@@ -212,7 +216,6 @@ def build_presentation_html(data, image_urls, product_name, yt_embed_code):
         f = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', t)
         return f.replace("\n- ", "<br>• ")
 
-    # Quote Box
     quote_html = ""
     q = data.get('quote', {})
     if q and q.get('text'):
@@ -231,24 +234,20 @@ def build_presentation_html(data, image_urls, product_name, yt_embed_code):
         
         content_html += f'<h3>{fmt(sec.get("title","Info"))}</h3>{img_tag}<p>{fmt(sec.get("content",""))}</p>'
         
-        # Inserimento dinamico Citazione e Video
         if idx == 0 and quote_html: content_html += quote_html
         if idx == 1 and yt_embed_code: content_html += yt_embed_code
     
     content_html += "</div>"
 
-    # Tabella Specifiche
     if data.get('specs') and len(data['specs']) > 0:
         rows = "".join([f"<tr><td style='padding: 12px; border-bottom: 1px solid #e2e8f0; font-weight: bold; color: #1e293b; width: 40%; background: #f8fafc;'>{s.get('k','')}</td><td style='padding: 12px; border-bottom: 1px solid #e2e8f0; color: #475569;'>{s.get('v','')}</td></tr>" for s in data['specs']])
         content_html += f"<div class='rd-article-content'><h3>Specifiche Tecniche</h3><div style='overflow-x: auto;'><table style='width: 100%; border-collapse: collapse; text-align: left; margin-bottom: 40px; font-size: 0.95rem; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.03);'><tbody>{rows}</tbody></table></div></div>"
 
-    # Galleria HD
     remaining = [i for i in image_urls if i not in used]
     if remaining:
         gallery = "".join([f'<a href="{i}" target="_blank"><img src="{i}" style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.05);"></a>' for i in remaining])
         content_html += f"<div class='rd-article-content'><h3>Galleria Immagini</h3><div style='display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-top: 20px; margin-bottom: 40px;'>{gallery}</div></div>"
     
-    # FAQ
     faqs_html_list = []
     for f in data.get('faqs', []):
         if isinstance(f, dict):
@@ -258,7 +257,13 @@ def build_presentation_html(data, image_urls, product_name, yt_embed_code):
             
     faq_wrapper = f"<div class='rd-article-content'><h3>Domande Frequenti</h3>{''.join(faqs_html_list)}</div>" if faqs_html_list else ""
     
-    schema = f"""<script type="application/ld+json">{{"@context": "https://schema.org/", "@type": "Product", "name": "{product_name}", "image": "{hero_img}", "description": "{data.get('meta_desc', '').replace('"', "'")}", "offers": {{"@type": "Offer", "price": "{price_val.replace('€', '').replace(',', '.').strip() if '€' in price_val else '0.00'}", "priceCurrency": "EUR"}}}}</script>"""
+    # Schema dinamico: Product se c'è prezzo, Article se è una guida
+    if has_price:
+        clean_price = price_val.replace('€', '').replace(',', '.').strip()
+        schema = f"""<script type="application/ld+json">{{"@context": "https://schema.org/", "@type": "Product", "name": "{topic}", "image": "{hero_img}", "description": "{data.get('meta_desc', '').replace('"', "'")}", "offers": {{"@type": "Offer", "price": "{clean_price}", "priceCurrency": "EUR"}}}}</script>"""
+    else:
+        schema = f"""<script type="application/ld+json">{{"@context": "https://schema.org/", "@type": "Article", "headline": "{topic}", "image": "{hero_img}", "description": "{data.get('meta_desc', '').replace('"', "'")}"}}</script>"""
+        
     disclaimer = "<p style='font-size: 0.75rem; text-align: center; border-top: 1px solid #e2e8f0; padding-top: 25px; margin-top: 60px;'><em>In qualità di Affiliato Amazon, riceviamo un guadagno dagli acquisti idonei.</em></p>"
 
     return f"{head_code}{top_box}{content_html}{faq_wrapper}{top_box}{schema}{disclaimer}"
@@ -266,7 +271,7 @@ def build_presentation_html(data, image_urls, product_name, yt_embed_code):
 # --- CORE ---
 
 def process_emails():
-    print(f"\n--- 🔍 Scan {IMAP_FOLDER} (Python {sys.version.split()[0]}) ---")
+    print(f"\n--- 🔍 Scan {IMAP_FOLDER} ---")
     try:
         mail = imaplib.IMAP4_SSL(IMAP_SERVER, 993)
         mail.login(IMAP_USER, IMAP_PASS)
@@ -301,52 +306,56 @@ def process_emails():
                     if os.path.splitext(filename)[1].lower() in ['.pdf', '.docx']:
                         attachments_text += f"\n--- {filename} ---\n{extract_text_from_file(fpath)}"
 
-            # Ricerca Link YouTube (Regex)
             final_notes = f"BODY:\n{body}\n\nDOCS:\n{attachments_text}"
             yt_embed_code = ""
             yt_match = re.search(r'(https?://)?(www\.)?(youtube\.com/watch\?v=|youtu\.be/)([a-zA-Z0-9_-]{11})', final_notes)
             if yt_match:
                 video_id = yt_match.group(4)
                 yt_embed_code = f"<div style='position: relative; padding-bottom: 56.25%; height: 0; overflow: hidden; border-radius: 12px; margin: 40px 0; box-shadow: 0 4px 20px rgba(0,0,0,0.1);'><iframe src='https://www.youtube.com/embed/{video_id}' style='position: absolute; top: 0; left: 0; width: 100%; height: 100%;' frameborder='0' allowfullscreen></iframe></div>"
-                print(f"   🎥 Trovato video YouTube integrato.")
 
             if not is_valid_press_release(subj, body):
-                print("   🚫 Ignorato: Non sembra un comunicato stampa.")
+                print("   🚫 Ignorato: Non sembra idoneo.")
                 mail.store(i, '+FLAGS', '\\Seen')
                 continue
 
-            p_name = extract_product_name(subj)
+            # --- ESTRAZIONE DINAMICA TIPO ARTICOLO E SLUG ---
+            meta = extract_article_metadata(subj, body)
+            topic = meta.get('topic', 'Novità')
+            article_type = meta.get('article_type', 'news')
+            
             search_queries = extract_search_queries(body)
-            if p_name not in search_queries: search_queries.insert(0, p_name)
+            if topic not in search_queries: search_queries.insert(0, topic)
                 
             wp_media_results = search_smart_media_on_wp(search_queries)
             wp_hd_urls = [m['url'] for m in wp_media_results]
             featured_id = wp_media_results[0]['id'] if wp_media_results else None
             
-            ai_data = generate_presentation_content(p_name, final_notes, cat_list, wp_hd_urls)
-            html = build_presentation_html(ai_data, wp_hd_urls, p_name, yt_embed_code)
+            ai_data = generate_presentation_content(topic, article_type, final_notes, cat_list, wp_hd_urls)
+            html = build_presentation_html(ai_data, wp_hd_urls, topic, yt_embed_code)
             
-            # Se la generazione è fallita (es. rate limit ostinato), salta questa mail
             if not ai_data: 
-                print("   ⚠️ Saltato causa rate limit persistente.")
+                print("   ⚠️ Saltato causa rate limit.")
                 continue
 
+            # Generazione Slug Dinamico (es. guida-caro-carburante)
+            clean_topic = re.sub(r'[^a-z0-9]+', '-', topic.lower()).strip('-')
+            dynamic_slug = f"{article_type}-{clean_topic}"
+
             payload = {
-                'title': ai_data.get('seo_title', p_name), 
+                'title': ai_data.get('seo_title', topic), 
                 'content': html, 
-                'excerpt': ai_data.get('meta_desc', ''), # SEO Riassunto
+                'excerpt': ai_data.get('meta_desc', ''), 
                 'status': 'draft', 
                 'categories': [cat_list.get(ai_data.get('selected_cat'), 1)],
-                'slug': f"presentazione-{re.sub(r'[^a-z0-9]+', '-', p_name.lower()).strip('-')}"
+                'slug': dynamic_slug
             }
             if featured_id: payload['featured_media'] = featured_id
 
             r = requests.post(f"{WP_API_URL}/posts", headers=get_auth_header(), json=payload)
             if r.status_code == 201:
-                print(f"   ✅ Bozza v100.3 creata: {r.json().get('link')}")
+                print(f"   ✅ Bozza v100.4 creata ({article_type}): {r.json().get('link')}")
                 mail.store(i, '+FLAGS', '\\Seen')
             
-            # 🛡️ Respiro di 5 secondi tra una mail e l'altra per evitare colli di bottiglia API
             time.sleep(5)
 
         shutil.rmtree(temp_path)
@@ -354,7 +363,7 @@ def process_emails():
     except Exception as e: print(f"❌ Errore: {e}")
 
 if __name__ == "__main__":
-    print(f"🚀 Email Bot v100.3 God Mode (Anti-Ban) attivo (Python {sys.version.split()[0]})")
+    print(f"🚀 Email Bot v100.4 Dynamic Content (Python {sys.version.split()[0]})")
     while True:
         process_emails()
         time.sleep(600)
