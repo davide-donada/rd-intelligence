@@ -85,7 +85,7 @@ def search_smart_media_on_wp(queries):
         except: pass
     return results
 
-# --- ESTRAZIONE TESTO ---
+# --- ESTRAZIONE TESTO E CONTROLLI ---
 
 def extract_text_from_file(filepath):
     ext = os.path.splitext(filepath)[1].lower()
@@ -105,6 +105,20 @@ def extract_text_from_file(filepath):
                 text += para.text + "\n"
     except: pass
     return text.encode('utf-8', 'surrogateescape').decode('utf-8', 'ignore')
+
+def is_valid_press_release(subject, body):
+    prompt = f"Oggetto: {subject}\ncorpo: {body[:800]}\n\nQuesto testo è un comunicato stampa o news tech? Rispondi SOLO 'SI' o 'NO'."
+    try:
+        response = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}], max_tokens=5)
+        return "SI" in response.choices[0].message.content.upper()
+    except: return True
+
+def extract_product_name(subject):
+    prompt = f"Oggetto: {subject}\nEstrai il nome del prodotto/brand principale (max 3 parole). Solo il nome."
+    try:
+        response = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}], max_tokens=20)
+        return response.choices[0].message.content.strip()
+    except: return "Nuovo Prodotto"
 
 # --- LOGICA AI (GOD MODE) ---
 
@@ -211,7 +225,7 @@ def build_presentation_html(data, image_urls, product_name, yt_embed_code):
         if idx == 0 and quote_html: content_html += quote_html
         if idx == 1 and yt_embed_code: content_html += yt_embed_code
     
-    content_html += "</div>" # Chiude blocco testo principale
+    content_html += "</div>"
 
     # Tabella Specifiche
     if data.get('specs') and len(data['specs']) > 0:
@@ -286,6 +300,11 @@ def process_emails():
                 yt_embed_code = f"<div style='position: relative; padding-bottom: 56.25%; height: 0; overflow: hidden; border-radius: 12px; margin: 40px 0; box-shadow: 0 4px 20px rgba(0,0,0,0.1);'><iframe src='https://www.youtube.com/embed/{video_id}' style='position: absolute; top: 0; left: 0; width: 100%; height: 100%;' frameborder='0' allowfullscreen></iframe></div>"
                 print(f"   🎥 Trovato video YouTube integrato.")
 
+            if not is_valid_press_release(subj, body):
+                print("   🚫 Ignorato: Non sembra un comunicato stampa.")
+                mail.store(i, '+FLAGS', '\\Seen')
+                continue
+
             p_name = extract_product_name(subj)
             search_queries = extract_search_queries(body)
             if p_name not in search_queries: search_queries.insert(0, p_name)
@@ -309,7 +328,7 @@ def process_emails():
 
             r = requests.post(f"{WP_API_URL}/posts", headers=get_auth_header(), json=payload)
             if r.status_code == 201:
-                print(f"   ✅ Bozza v100 creata: {r.json().get('link')}")
+                print(f"   ✅ Bozza v100.1 creata: {r.json().get('link')}")
                 mail.store(i, '+FLAGS', '\\Seen')
 
         shutil.rmtree(temp_path)
@@ -317,7 +336,7 @@ def process_emails():
     except Exception as e: print(f"❌ Errore: {e}")
 
 if __name__ == "__main__":
-    print(f"🚀 Email Bot v100.0 God Mode attivo (Python {sys.version.split()[0]})")
+    print(f"🚀 Email Bot v100.1 God Mode attivo (Python {sys.version.split()[0]})")
     while True:
         process_emails()
         time.sleep(600)
