@@ -199,11 +199,10 @@ def build_presentation_html(data, image_urls, product_name):
         if img_url and img_url in image_urls and img_url not in used:
             img_tag = f'<img src="{img_url}" style="width: 100%; border-radius: 12px; margin: 30px 0; display: block; box-shadow: 0 4px 20px rgba(0,0,0,0.06);" alt="{sec.get("image_alt","")}">'
             used.append(img_url)
-        content_html += f'<h3>{sec.get("title","Info")}</h3>{img_tag}<p>{fmt(sec.get("content",""))}</p>'
+        content_html += f'<h3>{fmt(sec.get("title","Info"))}</h3>{img_tag}<p>{fmt(sec.get("content",""))}</p>'
     
     remaining = [i for i in image_urls if i not in used]
     if remaining:
-        # Galleria immagini ora cliccabili in alta definizione
         gallery = "".join([f'<a href="{i}" target="_blank"><img src="{i}" style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.05);"></a>' for i in remaining])
         content_html += f'<h3>Galleria Immagini</h3><div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-top: 20px; margin-bottom: 40px;">{gallery}</div>'
     
@@ -214,7 +213,7 @@ def build_presentation_html(data, image_urls, product_name):
         if isinstance(f, dict):
             q = f.get('q', f.get('question', f.get('domanda', 'Domanda')))
             a = f.get('a', f.get('answer', f.get('risposta', '')))
-            faqs_html_list.append(f"<details style='margin-bottom: 15px; border: 1px solid #e2e8f0; border-radius: 10px; padding: 15px 25px; background: #ffffff;'><summary style='font-weight: 700; cursor: pointer; color: #1e293b; outline: none; font-size: 1.1rem;'>{q}</summary><div style='margin-top: 15px; color: #475569; line-height: 1.7; border-top: 1px solid #f1f5f9; padding-top: 15px;'>{a}</div></details>")
+            faqs_html_list.append(f"<details style='margin-bottom: 15px; border: 1px solid #e2e8f0; border-radius: 10px; padding: 15px 25px; background: #ffffff;'><summary style='font-weight: 700; cursor: pointer; color: #1e293b; outline: none; font-size: 1.1rem;'>{fmt(q)}</summary><div style='margin-top: 15px; color: #475569; line-height: 1.7; border-top: 1px solid #f1f5f9; padding-top: 15px;'>{fmt(a)}</div></details>")
             
     faq_wrapper = f"<div class='rd-article-content'><h3>Domande Frequenti</h3>{''.join(faqs_html_list)}</div>" if faqs_html_list else ""
     
@@ -298,7 +297,7 @@ def process_emails():
     except Exception as e: print(f"❌ Errore: {e}")
 
 if __name__ == "__main__":
-    print(f"🚀 Email Bot v98.0 Full Layout attivo (Python {sys.version.split()[0]})")
+    print(f"🚀 Email Bot v98.1 Full Layout attivo (Python {sys.version.split()[0]})")
     while True:
         process_emails()
         time.sleep(600)
