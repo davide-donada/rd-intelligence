@@ -106,46 +106,38 @@ def extract_text_from_file(filepath):
     except: pass
     return text.encode('utf-8', 'surrogateescape').decode('utf-8', 'ignore')
 
-# --- LOGICA AI (VERSIONE VISION) ---
+# --- LOGICA AI (GOD MODE) ---
 
 def generate_presentation_content(product_name, notes, cat_list, photo_urls):
     cat_names = ", ".join(list(cat_list.keys()))
     
-    # Prompt ottimizzato per la pertinenza visiva
     prompt = f"""
-    Sei il redattore di RecensioneDigitale.it. Scrivi una PRESENTAZIONE giornalistica professionale su '{product_name}'.
-    Usa la terza persona plurale e uno stile editoriale da testata tech.
+    Sei il caporedattore tech di RecensioneDigitale.it. Scrivi una PRESENTAZIONE giornalistica PREMIUM su '{product_name}'.
+    Usa la terza persona plurale e uno stile editoriale da testata tech autorevole.
     
-    REGOLE FOTO (CRUCIALE):
-    - Analizza FISICAMENTE le immagini fornite tramite gli URL. 
-    - Guarda il contenuto, leggi eventuali testi nelle immagini (OCR) e capisci cosa rappresentano.
-    - Nel campo 'suggested_image_url' inserisci l'URL della foto che descrive MEGLIO il contenuto di quel paragrafo.
-    - Se un paragrafo parla di 'design', usa una foto d'insieme. Se parla di 'connettività', usa una foto delle porte o del ricevitore.
-    - Nel campo 'image_alt' scrivi una descrizione tecnica di ciò che vedi nella foto.
+    REGOLE FOTO (VISION):
+    - Analizza FISICAMENTE le immagini fornite tramite gli URL (leggi testo, riconosci il dettaglio).
+    - 'suggested_image_url': inserisci l'URL della foto che descrive MEGLIO quel paragrafo.
+    - 'image_alt': descrizione tecnica di ciò che vedi.
 
     REGOLE EDITORIALI:
-    - 5 Sezioni con paragrafi da 80-120 parole.
-    - 3-5 grassetti (**) obbligatori per sezione.
-    - L'intro DEVE avere in grassetto Brand e Prodotto.
-    - Genera ESATTAMENTE 3 FAQ.
+    - sections: 5 Sezioni con paragrafi da 80-120 parole. 3-5 grassetti (**) a sezione.
+    - intro: DEVE avere in grassetto Brand e Prodotto.
+    - faqs: ESATTAMENTE 3 domande e risposte.
+    - price: Trova il prezzo nel comunicato (es. 79,99€). Se non c'è scrivi 'Vedi Prezzo'.
+    - top_features: Estrai i 3 veri punti di forza del prodotto (max 10 parole l'uno).
+    - specs: Estrai i dati tecnici (es. peso, risoluzione, batteria) in una lista di max 8 oggetti. 'k' è il nome (es. Autonomia), 'v' è il valore (es. 50 ore). Se non ci sono dati, lascia vuoto.
+    - quote: Trova un virgolettato (citazione del CEO o PR). Compila 'text' con la frase e 'author' col nome. Altrimenti lascia vuoto.
     
-    STRUTTURA JSON: seo_title, selected_cat (tra {cat_names}), meta_desc, intro, price, sections (title, content, suggested_image_url, image_alt), faqs.
+    STRUTTURA JSON: seo_title, selected_cat (tra {cat_names}), meta_desc, intro, price, top_features (lista di 3 stringhe), specs (lista di oggetti k, v), quote (oggetto text, author), sections (title, content, suggested_image_url, image_alt), faqs.
     
     DATI: '{notes}'.
     """
 
-    # Costruiamo il messaggio per l'AI includendo sia il testo che le immagini fisiche
     content_payload = [{"type": "text", "text": prompt}]
-    
     for url in photo_urls:
-        content_payload.append({
-            "type": "text", 
-            "text": f"Analizza questa immagine per l'articolo. URL di riferimento per il JSON: {url}"
-        })
-        content_payload.append({
-            "type": "image_url", 
-            "image_url": {"url": url}
-        })
+        content_payload.append({"type": "text", "text": f"URL FOTO: {url}"})
+        content_payload.append({"type": "image_url", "image_url": {"url": url}})
             
     response = client.chat.completions.create(
         model="gpt-4o-mini", 
@@ -154,9 +146,9 @@ def generate_presentation_content(product_name, notes, cat_list, photo_urls):
     )
     return json.loads(response.choices[0].message.content)
 
-# --- COSTRUZIONE HTML ---
+# --- COSTRUZIONE HTML (LAYOUT PREMIUM) ---
 
-def build_presentation_html(data, image_urls, product_name):
+def build_presentation_html(data, image_urls, product_name, yt_embed_code):
     price_val = data.get("price", "Vedi Prezzo")
     if price_val.strip() == "": price_val = "Vedi Prezzo"
     if "€" not in price_val and any(char.isdigit() for char in price_val): price_val = f"€ {price_val}"
@@ -190,23 +182,49 @@ def build_presentation_html(data, image_urls, product_name):
         f = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', t)
         return f.replace("\n- ", "<br>• ")
 
-    content_html = f'<div class="rd-article-content"><p>{fmt(data.get("intro",""))}</p>'
+    # Top Features Box
+    top_features_html = ""
+    if data.get('top_features'):
+        lis = "".join([f"<li style='margin-bottom: 10px;'>✅ <strong>{fmt(f)}</strong></li>" for f in data['top_features']])
+        top_features_html = f"<div style='background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 25px; margin: 30px 0;'><h3 style='margin-top: 0; color: #0f172a; font-size: 1.3rem; margin-bottom: 15px; padding:0; border:none; background:none;'>I Punti di Forza</h3><ul style='list-style-type: none; padding-left: 0; margin: 0; color: #334155;'>{lis}</ul></div>"
+
+    # Quote Box
+    quote_html = ""
+    q = data.get('quote', {})
+    if q and q.get('text'):
+        quote_html = f"<blockquote style='border-left: 4px solid #ff9900; margin: 40px 0; padding: 15px 25px; background: #fffaf0; font-style: italic; color: #475569; border-radius: 0 12px 12px 0;'><p style='margin: 0; font-size: 1.15rem; line-height: 1.7;'>\"{q['text']}\"</p><footer style='margin-top: 15px; font-weight: 800; color: #1e293b;'>— {q.get('author', 'Azienda')}</footer></blockquote>"
+
+    content_html = f'<div class="rd-article-content"><p>{fmt(data.get("intro",""))}</p>{top_features_html}'
     used = []
     
-    for sec in data.get('sections', []):
+    for idx, sec in enumerate(data.get('sections', [])):
         if not isinstance(sec, dict): continue
         img_url = sec.get('suggested_image_url', '').strip()
         img_tag = ""
         if img_url and img_url in image_urls and img_url not in used:
             img_tag = f'<a href="{img_url}" target="_blank"><img src="{img_url}" style="width: 100%; border-radius: 12px; margin: 30px 0; display: block; box-shadow: 0 4px 20px rgba(0,0,0,0.06);" alt="{sec.get("image_alt","")}"></a>'
             used.append(img_url)
+        
         content_html += f'<h3>{fmt(sec.get("title","Info"))}</h3>{img_tag}<p>{fmt(sec.get("content",""))}</p>'
+        
+        # Inserimento dinamico Citazione e Video
+        if idx == 0 and quote_html: content_html += quote_html
+        if idx == 1 and yt_embed_code: content_html += yt_embed_code
     
+    content_html += "</div>" # Chiude blocco testo principale
+
+    # Tabella Specifiche
+    if data.get('specs') and len(data['specs']) > 0:
+        rows = "".join([f"<tr><td style='padding: 12px; border-bottom: 1px solid #e2e8f0; font-weight: bold; color: #1e293b; width: 40%; background: #f8fafc;'>{s.get('k','')}</td><td style='padding: 12px; border-bottom: 1px solid #e2e8f0; color: #475569;'>{s.get('v','')}</td></tr>" for s in data['specs']])
+        content_html += f"<div class='rd-article-content'><h3>Specifiche Tecniche</h3><div style='overflow-x: auto;'><table style='width: 100%; border-collapse: collapse; text-align: left; margin-bottom: 40px; font-size: 0.95rem; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.03);'><tbody>{rows}</tbody></table></div></div>"
+
+    # Galleria HD
     remaining = [i for i in image_urls if i not in used]
     if remaining:
         gallery = "".join([f'<a href="{i}" target="_blank"><img src="{i}" style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.05);"></a>' for i in remaining])
-        content_html += f'<h3>Galleria Immagini</h3><div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-top: 20px; margin-bottom: 40px;">{gallery}</div>'
+        content_html += f"<div class='rd-article-content'><h3>Galleria Immagini</h3><div style='display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-top: 20px; margin-bottom: 40px;'>{gallery}</div></div>"
     
+    # FAQ
     faqs_html_list = []
     for f in data.get('faqs', []):
         if isinstance(f, dict):
@@ -215,6 +233,7 @@ def build_presentation_html(data, image_urls, product_name):
             faqs_html_list.append(f"<details style='margin-bottom: 15px; border: 1px solid #e2e8f0; border-radius: 10px; padding: 15px 25px; background: #ffffff;'><summary style='font-weight: 700; cursor: pointer; color: #1e293b; outline: none; font-size: 1.1rem;'>{fmt(q)}</summary><div style='margin-top: 15px; color: #475569; line-height: 1.7; border-top: 1px solid #f1f5f9; padding-top: 15px;'>{fmt(a)}</div></details>")
             
     faq_wrapper = f"<div class='rd-article-content'><h3>Domande Frequenti</h3>{''.join(faqs_html_list)}</div>" if faqs_html_list else ""
+    
     schema = f"""<script type="application/ld+json">{{"@context": "https://schema.org/", "@type": "Product", "name": "{product_name}", "image": "{hero_img}", "description": "{data.get('meta_desc', '').replace('"', "'")}", "offers": {{"@type": "Offer", "price": "{price_val.replace('€', '').replace(',', '.').strip() if '€' in price_val else '0.00'}", "priceCurrency": "EUR"}}}}</script>"""
     disclaimer = "<p style='font-size: 0.75rem; text-align: center; border-top: 1px solid #e2e8f0; padding-top: 25px; margin-top: 60px;'><em>In qualità di Affiliato Amazon, riceviamo un guadagno dagli acquisti idonei.</em></p>"
 
@@ -258,10 +277,15 @@ def process_emails():
                     if os.path.splitext(filename)[1].lower() in ['.pdf', '.docx']:
                         attachments_text += f"\n--- {filename} ---\n{extract_text_from_file(fpath)}"
 
-            if not is_valid_press_release(subj, body):
-                mail.store(i, '+FLAGS', '\\Seen')
-                continue
-            
+            # Ricerca Link YouTube (Regex)
+            final_notes = f"BODY:\n{body}\n\nDOCS:\n{attachments_text}"
+            yt_embed_code = ""
+            yt_match = re.search(r'(https?://)?(www\.)?(youtube\.com/watch\?v=|youtu\.be/)([a-zA-Z0-9_-]{11})', final_notes)
+            if yt_match:
+                video_id = yt_match.group(4)
+                yt_embed_code = f"<div style='position: relative; padding-bottom: 56.25%; height: 0; overflow: hidden; border-radius: 12px; margin: 40px 0; box-shadow: 0 4px 20px rgba(0,0,0,0.1);'><iframe src='https://www.youtube.com/embed/{video_id}' style='position: absolute; top: 0; left: 0; width: 100%; height: 100%;' frameborder='0' allowfullscreen></iframe></div>"
+                print(f"   🎥 Trovato video YouTube integrato.")
+
             p_name = extract_product_name(subj)
             search_queries = extract_search_queries(body)
             if p_name not in search_queries: search_queries.insert(0, p_name)
@@ -270,13 +294,13 @@ def process_emails():
             wp_hd_urls = [m['url'] for m in wp_media_results]
             featured_id = wp_media_results[0]['id'] if wp_media_results else None
             
-            final_notes = f"BODY:\n{body}\n\nDOCS:\n{attachments_text}"
             ai_data = generate_presentation_content(p_name, final_notes, cat_list, wp_hd_urls)
-            html = build_presentation_html(ai_data, wp_hd_urls, p_name)
+            html = build_presentation_html(ai_data, wp_hd_urls, p_name, yt_embed_code)
             
             payload = {
                 'title': ai_data.get('seo_title', p_name), 
                 'content': html, 
+                'excerpt': ai_data.get('meta_desc', ''), # SEO Riassunto
                 'status': 'draft', 
                 'categories': [cat_list.get(ai_data.get('selected_cat'), 1)],
                 'slug': f"presentazione-{re.sub(r'[^a-z0-9]+', '-', p_name.lower()).strip('-')}"
@@ -285,7 +309,7 @@ def process_emails():
 
             r = requests.post(f"{WP_API_URL}/posts", headers=get_auth_header(), json=payload)
             if r.status_code == 201:
-                print(f"   ✅ Bozza VISION HD creata: {r.json().get('link')}")
+                print(f"   ✅ Bozza v100 creata: {r.json().get('link')}")
                 mail.store(i, '+FLAGS', '\\Seen')
 
         shutil.rmtree(temp_path)
@@ -293,6 +317,7 @@ def process_emails():
     except Exception as e: print(f"❌ Errore: {e}")
 
 if __name__ == "__main__":
+    print(f"🚀 Email Bot v100.0 God Mode attivo (Python {sys.version.split()[0]})")
     while True:
         process_emails()
         time.sleep(600)
