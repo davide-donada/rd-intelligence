@@ -124,25 +124,26 @@ def extract_article_metadata(subject, body):
         return json.loads(response.choices[0].message.content)
     except: return {"topic": "Novità", "article_type": "news"}
 
-# --- LOGICA AI (DINAMICA) ---
+# --- LOGICA AI (DINAMICA CON FIX FOTO) ---
 
 def generate_presentation_content(topic, article_type, notes, cat_list, photo_urls):
     cat_names = ", ".join(list(cat_list.keys()))
     
     prompt = f"""
     Sei il caporedattore tech di RecensioneDigitale.it. Scrivi un articolo formato '{article_type.upper()}' su '{topic}'.
-    Usa la terza persona plurale e uno stile editoriale idoneo al tipo di contenuto (es. divulgativo se è una guida, tecnico se è una presentazione).
+    Usa la terza persona plurale e uno stile editoriale idoneo al tipo di contenuto.
     
-    REGOLE FOTO (VISION):
-    - 'suggested_image_url': inserisci l'URL della foto che descrive MEGLIO quel paragrafo guardando le foto fornite.
-    - 'image_alt': descrizione tecnica di ciò che vedi.
+    REGOLE FOTO (CRUCIALE):
+    - Nel campo 'suggested_image_url': copia e incolla l'URL ESATTO fornito se la foto descrive il paragrafo. 
+    - Se nessuna foto è adatta a quel paragrafo, scrivi una stringa vuota "". NON INVENTARE O MODIFICARE GLI URL.
+    - 'image_alt': descrizione tecnica di ciò che vedi nella foto.
 
     REGOLE EDITORIALI:
     - sections: 5 Sezioni con paragrafi da 80-120 parole. 3-5 grassetti (**) a sezione.
     - intro: DEVE avere in grassetto l'argomento principale ('{topic}').
     - faqs: ESATTAMENTE 3 domande e risposte.
-    - price: Se è un prodotto fisico trova il prezzo (es. 79,99€). Se è una guida, un servizio o non c'è prezzo, scrivi ESATTAMENTE 'N/A'.
-    - specs: Se è un prodotto, estrai dati tecnici (k, v). Se è una guida o non ha dati tecnici strutturabili, lascia la lista vuota.
+    - price: Se è un prodotto fisico trova il prezzo (es. 79,99€). Se è una guida o non c'è, scrivi 'N/A'.
+    - specs: Se è un prodotto, estrai dati tecnici (k, v). Se è una guida, lascia la lista vuota.
     - quote: Trova un virgolettato pertinente. Compila 'text' con la frase e 'author' col nome. Altrimenti lascia vuoto.
     
     STRUTTURA JSON: seo_title, selected_cat (tra {cat_names}), meta_desc, intro, price, specs (lista di oggetti k, v), quote (oggetto text, author), sections (title, content, suggested_image_url, image_alt), faqs.
@@ -152,8 +153,9 @@ def generate_presentation_content(topic, article_type, notes, cat_list, photo_ur
 
     content_payload = [{"type": "text", "text": prompt}]
     
+    # Diamo all'AI solo le prime 4 foto per la Vision, specificando bene qual è l'URL da copiare
     for url in photo_urls[:4]:
-        content_payload.append({"type": "text", "text": f"URL FOTO: {url}"})
+        content_payload.append({"type": "text", "text": f"URL ESATTO DA COPIARE: {url}"})
         content_payload.append({"type": "image_url", "image_url": {"url": url}})
             
     max_retries = 3
@@ -197,7 +199,6 @@ def build_presentation_html(data, image_urls, topic, yt_embed_code):
     @media (max-width: 768px) { .rd-box-responsive { padding: 15px !important; } .rd-mobile-reset { min-width: 0 !important; width: 100% !important; flex: 0 0 100% !important; max-width: 100% !important; box-sizing: border-box !important; } .rd-hero-content-col { text-align: center !important; padding-left: 0 !important; } .rd-hero-price-row { justify-content: center !important; } .rd-cta-button { padding: 14px 20px !important; width: auto !important; max-width: 100% !important; white-space: normal !important; } }
     </style>"""
 
-    # Rendering dinamico del blocco prezzo
     price_html = f"<div class='rd-hero-price-row' style='display: flex; flex-wrap: wrap; align-items: center; gap: 15px; margin-bottom: 25px;'><div style='font-size: 2.6rem; color: #b12704; font-weight: 900; letter-spacing: -1px;'>{price_val}</div></div>" if has_price else "<div style='margin-bottom: 20px;'></div>"
 
     top_box = f"""
@@ -228,6 +229,7 @@ def build_presentation_html(data, image_urls, topic, yt_embed_code):
         if not isinstance(sec, dict): continue
         img_url = sec.get('suggested_image_url', '').strip()
         img_tag = ""
+        # Controllo stringente per l'inclusione della foto nel paragrafo
         if img_url and img_url in image_urls and img_url not in used:
             img_tag = f'<a href="{img_url}" target="_blank"><img src="{img_url}" style="width: 100%; border-radius: 12px; margin: 30px 0; display: block; box-shadow: 0 4px 20px rgba(0,0,0,0.06);" alt="{sec.get("image_alt","")}"></a>'
             used.append(img_url)
@@ -257,7 +259,6 @@ def build_presentation_html(data, image_urls, topic, yt_embed_code):
             
     faq_wrapper = f"<div class='rd-article-content'><h3>Domande Frequenti</h3>{''.join(faqs_html_list)}</div>" if faqs_html_list else ""
     
-    # Schema dinamico: Product se c'è prezzo, Article se è una guida
     if has_price:
         clean_price = price_val.replace('€', '').replace(',', '.').strip()
         schema = f"""<script type="application/ld+json">{{"@context": "https://schema.org/", "@type": "Product", "name": "{topic}", "image": "{hero_img}", "description": "{data.get('meta_desc', '').replace('"', "'")}", "offers": {{"@type": "Offer", "price": "{clean_price}", "priceCurrency": "EUR"}}}}</script>"""
@@ -318,7 +319,6 @@ def process_emails():
                 mail.store(i, '+FLAGS', '\\Seen')
                 continue
 
-            # --- ESTRAZIONE DINAMICA TIPO ARTICOLO E SLUG ---
             meta = extract_article_metadata(subj, body)
             topic = meta.get('topic', 'Novità')
             article_type = meta.get('article_type', 'news')
@@ -337,7 +337,6 @@ def process_emails():
                 print("   ⚠️ Saltato causa rate limit.")
                 continue
 
-            # Generazione Slug Dinamico (es. guida-caro-carburante)
             clean_topic = re.sub(r'[^a-z0-9]+', '-', topic.lower()).strip('-')
             dynamic_slug = f"{article_type}-{clean_topic}"
 
@@ -353,7 +352,7 @@ def process_emails():
 
             r = requests.post(f"{WP_API_URL}/posts", headers=get_auth_header(), json=payload)
             if r.status_code == 201:
-                print(f"   ✅ Bozza v100.4 creata ({article_type}): {r.json().get('link')}")
+                print(f"   ✅ Bozza v100.5 creata ({article_type}): {r.json().get('link')}")
                 mail.store(i, '+FLAGS', '\\Seen')
             
             time.sleep(5)
@@ -363,7 +362,7 @@ def process_emails():
     except Exception as e: print(f"❌ Errore: {e}")
 
 if __name__ == "__main__":
-    print(f"🚀 Email Bot v100.4 Dynamic Content (Python {sys.version.split()[0]})")
+    print(f"🚀 Email Bot v100.5 (Fix Foto) (Python {sys.version.split()[0]})")
     while True:
         process_emails()
         time.sleep(600)
