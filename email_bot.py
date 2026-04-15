@@ -120,7 +120,7 @@ def extract_product_name(subject):
         return response.choices[0].message.content.strip()
     except: return "Nuovo Prodotto"
 
-# --- LOGICA AI (GOD MODE) ---
+# --- LOGICA AI (GOD MODE CON ANTI-BAN) ---
 
 def generate_presentation_content(product_name, notes, cat_list, photo_urls):
     cat_names = ", ".join(list(cat_list.keys()))
@@ -130,8 +130,7 @@ def generate_presentation_content(product_name, notes, cat_list, photo_urls):
     Usa la terza persona plurale e uno stile editoriale da testata tech autorevole.
     
     REGOLE FOTO (VISION):
-    - Analizza FISICAMENTE le immagini fornite tramite gli URL (leggi testo, riconosci il dettaglio).
-    - 'suggested_image_url': inserisci l'URL della foto che descrive MEGLIO quel paragrafo.
+    - 'suggested_image_url': inserisci l'URL della foto che descrive MEGLIO quel paragrafo guardando le foto fornite.
     - 'image_alt': descrizione tecnica di ciò che vedi.
 
     REGOLE EDITORIALI:
@@ -148,20 +147,38 @@ def generate_presentation_content(product_name, notes, cat_list, photo_urls):
     """
 
     content_payload = [{"type": "text", "text": prompt}]
-    for url in photo_urls:
+    
+    # 🛡️ LIMITE TOKEN: Guardiamo fisicamente solo le prime 4 foto. Le altre vanno in galleria automaticamente.
+    for url in photo_urls[:4]:
         content_payload.append({"type": "text", "text": f"URL FOTO: {url}"})
         content_payload.append({"type": "image_url", "image_url": {"url": url}})
             
-    response = client.chat.completions.create(
-        model="gpt-4o-mini", 
-        messages=[{"role": "user", "content": content_payload}], 
-        response_format={"type": "json_object"}
-    )
-    return json.loads(response.choices[0].message.content)
+    # 🛡️ GESTIONE RATE LIMIT (ANTI-CRASH)
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4o-mini", 
+                messages=[{"role": "user", "content": content_payload}], 
+                response_format={"type": "json_object"}
+            )
+            return json.loads(response.choices[0].message.content)
+        except Exception as e:
+            if "429" in str(e) or "rate_limit" in str(e).lower():
+                print(f"   ⚠️ Limite token OpenAI raggiunto. Respiro per 20 secondi... (Tentativo {attempt+1}/{max_retries})")
+                time.sleep(20)
+            else:
+                print(f"   ❌ Errore AI: {e}")
+                break
+    
+    # Se fallisce 3 volte, restituisce un JSON vuoto per non far esplodere il programma
+    return {}
 
 # --- COSTRUZIONE HTML (LAYOUT PREMIUM) ---
 
 def build_presentation_html(data, image_urls, product_name, yt_embed_code):
+    if not data: return "<p>Errore di generazione testo.</p>" # Fallback
+    
     price_val = data.get("price", "Vedi Prezzo")
     if price_val.strip() == "": price_val = "Vedi Prezzo"
     if "€" not in price_val and any(char.isdigit() for char in price_val): price_val = f"€ {price_val}"
@@ -309,6 +326,11 @@ def process_emails():
             ai_data = generate_presentation_content(p_name, final_notes, cat_list, wp_hd_urls)
             html = build_presentation_html(ai_data, wp_hd_urls, p_name, yt_embed_code)
             
+            # Se la generazione è fallita (es. rate limit ostinato), salta questa mail
+            if not ai_data: 
+                print("   ⚠️ Saltato causa rate limit persistente.")
+                continue
+
             payload = {
                 'title': ai_data.get('seo_title', p_name), 
                 'content': html, 
@@ -321,15 +343,18 @@ def process_emails():
 
             r = requests.post(f"{WP_API_URL}/posts", headers=get_auth_header(), json=payload)
             if r.status_code == 201:
-                print(f"   ✅ Bozza v100.2 creata: {r.json().get('link')}")
+                print(f"   ✅ Bozza v100.3 creata: {r.json().get('link')}")
                 mail.store(i, '+FLAGS', '\\Seen')
+            
+            # 🛡️ Respiro di 5 secondi tra una mail e l'altra per evitare colli di bottiglia API
+            time.sleep(5)
 
         shutil.rmtree(temp_path)
         mail.logout()
     except Exception as e: print(f"❌ Errore: {e}")
 
 if __name__ == "__main__":
-    print(f"🚀 Email Bot v100.2 God Mode attivo (Python {sys.version.split()[0]})")
+    print(f"🚀 Email Bot v100.3 God Mode (Anti-Ban) attivo (Python {sys.version.split()[0]})")
     while True:
         process_emails()
         time.sleep(600)
