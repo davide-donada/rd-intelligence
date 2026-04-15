@@ -127,13 +127,17 @@ def generate_presentation_content(product_name, notes, cat_list, photo_urls):
     cat_names = ", ".join(list(cat_list.keys()))
     prompt = f"""
     Sei il redattore di RecensioneDigitale.it. Scrivi una PRESENTAZIONE giornalistica professionale su '{product_name}'.
+    
     REGOLE CRUCIALI:
     - Paragrafi corposi (80-120 parole).
-    - 3-5 grassetti (**) obbligatori per ogni paragrafo.
     - SEO Titolo: '{product_name}: [Sottotitolo accattivante]'.
     - Nel campo 'suggested_image_url' inserisci l'URL esatto della foto più pertinente (se nessuna è adatta lascia "").
-    - faqs: Genera ESATTAMENTE 3 domande e risposte. Non una di più.
-    - price: Trova il prezzo nel comunicato (es. '79,99 €'). Se non c'è scrivi 'Vedi Prezzo'.
+    - faqs: Genera ESATTAMENTE 3 domande e risposte. Non una di più, non una di meno.
+    - price: Trova il prezzo nel comunicato. Se non c'è scrivi 'Vedi Prezzo'.
+    
+    REGOLE GRASSETTI (**):
+    1. Il campo 'intro' DEVE obbligatoriamente contenere il nome del Brand e del Prodotto in **grassetto**, più un'altra parola chiave.
+    2. Ogni oggetto dentro 'sections' DEVE obbligatoriamente avere dalle 3 alle 5 parole in **grassetto** nel campo 'content'.
     
     STRUTTURA JSON: seo_title, selected_cat (tra {cat_names}), meta_desc, intro, price, sections (lista 5 oggetti: title, content, suggested_image_url, image_alt), faqs (lista 3 oggetti: q, a).
     
@@ -199,10 +203,11 @@ def build_presentation_html(data, image_urls, product_name):
     
     remaining = [i for i in image_urls if i not in used]
     if remaining:
+        # Galleria immagini ora cliccabili in alta definizione
         gallery = "".join([f'<a href="{i}" target="_blank"><img src="{i}" style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.05);"></a>' for i in remaining])
         content_html += f'<h3>Galleria Immagini</h3><div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-top: 20px; margin-bottom: 40px;">{gallery}</div>'
     
-    content_html += "</div>" # Chiude rd-article-content primario
+    content_html += "</div>"
 
     faqs_html_list = []
     for f in data.get('faqs', []):
@@ -293,7 +298,7 @@ def process_emails():
     except Exception as e: print(f"❌ Errore: {e}")
 
 if __name__ == "__main__":
-    print(f"🚀 Email Bot v97.0 Full Layout attivo (Python {sys.version.split()[0]})")
+    print(f"🚀 Email Bot v98.0 Full Layout attivo (Python {sys.version.split()[0]})")
     while True:
         process_emails()
         time.sleep(600)
