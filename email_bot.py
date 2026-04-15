@@ -124,7 +124,7 @@ def extract_article_metadata(subject, body):
         return json.loads(response.choices[0].message.content)
     except: return {"topic": "Novità", "article_type": "news"}
 
-# --- LOGICA AI (DINAMICA CON FIX FOTO) ---
+# --- LOGICA AI (TITOLI INTELLIGENTI) ---
 
 def generate_presentation_content(topic, article_type, notes, cat_list, photo_urls):
     cat_names = ", ".join(list(cat_list.keys()))
@@ -138,7 +138,8 @@ def generate_presentation_content(topic, article_type, notes, cat_list, photo_ur
     - Se nessuna foto è adatta a quel paragrafo, scrivi una stringa vuota "". NON INVENTARE O MODIFICARE GLI URL.
     - 'image_alt': descrizione tecnica di ciò che vedi nella foto.
 
-    REGOLE EDITORIALI:
+    REGOLE EDITORIALI E TITOLO:
+    - seo_title: Crea un titolo giornalistico perfetto. DIVIETO ASSOLUTO: Non usare MAI la parola "Recensione" (non hai testato il prodotto fisicamente). Se l'articolo è una 'presentazione' o 'news', usa formule come "[Prodotto] Ufficiale:", "Svelato", "Annunciato". Se è una 'guida', usa "Guida:", "Come fare...", "Consigli".
     - sections: 5 Sezioni con paragrafi da 80-120 parole. 3-5 grassetti (**) a sezione.
     - intro: DEVE avere in grassetto l'argomento principale ('{topic}').
     - faqs: ESATTAMENTE 3 domande e risposte.
@@ -153,7 +154,6 @@ def generate_presentation_content(topic, article_type, notes, cat_list, photo_ur
 
     content_payload = [{"type": "text", "text": prompt}]
     
-    # Diamo all'AI solo le prime 4 foto per la Vision, specificando bene qual è l'URL da copiare
     for url in photo_urls[:4]:
         content_payload.append({"type": "text", "text": f"URL ESATTO DA COPIARE: {url}"})
         content_payload.append({"type": "image_url", "image_url": {"url": url}})
@@ -229,7 +229,6 @@ def build_presentation_html(data, image_urls, topic, yt_embed_code):
         if not isinstance(sec, dict): continue
         img_url = sec.get('suggested_image_url', '').strip()
         img_tag = ""
-        # Controllo stringente per l'inclusione della foto nel paragrafo
         if img_url and img_url in image_urls and img_url not in used:
             img_tag = f'<a href="{img_url}" target="_blank"><img src="{img_url}" style="width: 100%; border-radius: 12px; margin: 30px 0; display: block; box-shadow: 0 4px 20px rgba(0,0,0,0.06);" alt="{sec.get("image_alt","")}"></a>'
             used.append(img_url)
@@ -352,7 +351,7 @@ def process_emails():
 
             r = requests.post(f"{WP_API_URL}/posts", headers=get_auth_header(), json=payload)
             if r.status_code == 201:
-                print(f"   ✅ Bozza v100.5 creata ({article_type}): {r.json().get('link')}")
+                print(f"   ✅ Bozza v100.6 creata ({article_type}): {r.json().get('link')}")
                 mail.store(i, '+FLAGS', '\\Seen')
             
             time.sleep(5)
@@ -362,7 +361,7 @@ def process_emails():
     except Exception as e: print(f"❌ Errore: {e}")
 
 if __name__ == "__main__":
-    print(f"🚀 Email Bot v100.5 (Fix Foto) (Python {sys.version.split()[0]})")
+    print(f"🚀 Email Bot v100.6 (Titoli Intelligenti) (Python {sys.version.split()[0]})")
     while True:
         process_emails()
         time.sleep(600)
