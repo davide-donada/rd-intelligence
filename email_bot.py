@@ -53,12 +53,9 @@ def get_all_wp_categories():
     return categories
 
 def extract_search_queries(body):
-    prompt = f"""Leggi questo comunicato stampa e genera 3 brevi query di ricerca (max 3 parole l'una) per trovare immagini adatte nel database del sito.
-    1. Il nome esatto del prodotto/modello.
-    2. Il nome del brand + la categoria.
-    3. Il contesto d'uso o parola chiave.
-    Rispondi SOLO con un array JSON di stringhe. Esempio: ["GXT 499W Forta", "Trust cuffie", "Gaming PS5"]
-    Testo: {body[:1000]}"""
+    prompt = f"""Leggi questo comunicato stampa e genera 3 brevi query di ricerca per trovare immagini HD su WP.
+    Testo: {body[:1000]}
+    Rispondi SOLO JSON: ["Query 1", "Query 2", "Query 3"]"""
     try:
         response = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}], response_format={"type": "json_object"})
         result = json.loads(response.choices[0].message.content)
@@ -67,10 +64,10 @@ def extract_search_queries(body):
                 if isinstance(result[key], list): return result[key][:3]
             return list(result.values())[:3]
         return result[:3]
-    except Exception as e: return ["Tecnologia"]
+    except: return ["Tecnologia"]
 
 def search_smart_media_on_wp(queries):
-    print(f"   🔍 Avvio ricerca elastica immagini su WP: {queries}")
+    print(f"   🔍 Ricerca elastica immagini su WP: {queries}")
     headers = get_auth_header()
     results = []
     seen_ids = set()
@@ -88,7 +85,7 @@ def search_smart_media_on_wp(queries):
         except: pass
     return results
 
-# --- ESTRAZIONE TESTO E LOGICA AI ---
+# --- ESTRAZIONE TESTO ---
 
 def extract_text_from_file(filepath):
     ext = os.path.splitext(filepath)[1].lower()
@@ -109,59 +106,63 @@ def extract_text_from_file(filepath):
     except: pass
     return text.encode('utf-8', 'surrogateescape').decode('utf-8', 'ignore')
 
-def is_valid_press_release(subject, body):
-    prompt = f"Oggetto: {subject}\ncorpo: {body[:800]}\n\nQuesto testo è un comunicato stampa o news tech? Rispondi SOLO 'SI' o 'NO'."
-    try:
-        response = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}], max_tokens=5)
-        return "SI" in response.choices[0].message.content.upper()
-    except: return True
-
-def extract_product_name(subject):
-    prompt = f"Oggetto: {subject}\nEstrai il nome del prodotto/brand principale (max 3 parole). Solo il nome."
-    try:
-        response = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}], max_tokens=20)
-        return response.choices[0].message.content.strip()
-    except: return "Nuovo Prodotto"
+# --- LOGICA AI (VERSIONE VISION) ---
 
 def generate_presentation_content(product_name, notes, cat_list, photo_urls):
     cat_names = ", ".join(list(cat_list.keys()))
+    
+    # Prompt ottimizzato per la pertinenza visiva
     prompt = f"""
     Sei il redattore di RecensioneDigitale.it. Scrivi una PRESENTAZIONE giornalistica professionale su '{product_name}'.
+    Usa la terza persona plurale e uno stile editoriale da testata tech.
     
-    REGOLE CRUCIALI:
-    - Paragrafi corposi (80-120 parole).
-    - SEO Titolo: '{product_name}: [Sottotitolo accattivante]'.
-    - Nel campo 'suggested_image_url' inserisci l'URL esatto della foto più pertinente (se nessuna è adatta lascia "").
-    - faqs: Genera ESATTAMENTE 3 domande e risposte. Non una di più, non una di meno.
-    - price: Trova il prezzo nel comunicato. Se non c'è scrivi 'Vedi Prezzo'.
+    REGOLE FOTO (CRUCIALE):
+    - Analizza FISICAMENTE le immagini fornite tramite gli URL. 
+    - Guarda il contenuto, leggi eventuali testi nelle immagini (OCR) e capisci cosa rappresentano.
+    - Nel campo 'suggested_image_url' inserisci l'URL della foto che descrive MEGLIO il contenuto di quel paragrafo.
+    - Se un paragrafo parla di 'design', usa una foto d'insieme. Se parla di 'connettività', usa una foto delle porte o del ricevitore.
+    - Nel campo 'image_alt' scrivi una descrizione tecnica di ciò che vedi nella foto.
+
+    REGOLE EDITORIALI:
+    - 5 Sezioni con paragrafi da 80-120 parole.
+    - 3-5 grassetti (**) obbligatori per sezione.
+    - L'intro DEVE avere in grassetto Brand e Prodotto.
+    - Genera ESATTAMENTE 3 FAQ.
     
-    REGOLE GRASSETTI (**):
-    1. Il campo 'intro' DEVE obbligatoriamente contenere il nome del Brand e del Prodotto in **grassetto**, più un'altra parola chiave.
-    2. Ogni oggetto dentro 'sections' DEVE obbligatoriamente avere dalle 3 alle 5 parole in **grassetto** nel campo 'content'.
+    STRUTTURA JSON: seo_title, selected_cat (tra {cat_names}), meta_desc, intro, price, sections (title, content, suggested_image_url, image_alt), faqs.
     
-    STRUTTURA JSON: seo_title, selected_cat (tra {cat_names}), meta_desc, intro, price, sections (lista 5 oggetti: title, content, suggested_image_url, image_alt), faqs (lista 3 oggetti: q, a).
-    
-    Note: '{notes}'.
+    DATI: '{notes}'.
     """
-    user_content = [{"type": "text", "text": prompt}]
+
+    # Costruiamo il messaggio per l'AI includendo sia il testo che le immagini fisiche
+    content_payload = [{"type": "text", "text": prompt}]
+    
     for url in photo_urls:
-        user_content.append({"type": "text", "text": f"URL FOTO: {url}"})
+        content_payload.append({
+            "type": "text", 
+            "text": f"Analizza questa immagine per l'articolo. URL di riferimento per il JSON: {url}"
+        })
+        content_payload.append({
+            "type": "image_url", 
+            "image_url": {"url": url}
+        })
             
-    response = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": user_content}], response_format={"type": "json_object"})
+    response = client.chat.completions.create(
+        model="gpt-4o-mini", 
+        messages=[{"role": "user", "content": content_payload}], 
+        response_format={"type": "json_object"}
+    )
     return json.loads(response.choices[0].message.content)
 
-# --- COSTRUZIONE HTML (LAYOUT COMPLETO) ---
+# --- COSTRUZIONE HTML ---
 
 def build_presentation_html(data, image_urls, product_name):
-    # Dati per i box
     price_val = data.get("price", "Vedi Prezzo")
     if price_val.strip() == "": price_val = "Vedi Prezzo"
     if "€" not in price_val and any(char.isdigit() for char in price_val): price_val = f"€ {price_val}"
     
     hero_img = image_urls[0] if image_urls else ""
     current_date = datetime.now().strftime("%d/%m/%Y")
-    
-    # Generazione Smart Link Amazon
     search_query = urllib.parse.quote(product_name)
     amazon_link = f"https://www.amazon.it/s?k={search_query}&tag={AMAZON_TAG}"
     
@@ -170,7 +171,7 @@ def build_presentation_html(data, image_urls, product_name):
     head_code = """
     <style>
     .rd-article-content h3 { position: relative; padding-left: 18px; border-left: 5px solid #ff9900; background: linear-gradient(90deg, #fffaf0 0%, #ffffff 100%); font-size: 1.6rem; font-weight: 800; color: #1a202c; margin-top: 50px; margin-bottom: 25px; padding-top: 10px; padding-bottom: 10px; border-radius: 0 8px 8px 0; }
-    @media (max-width: 768px) { .rd-box-responsive { padding: 15px !important; } .rd-mobile-reset { min-width: 0 !important; width: 100% !important; flex: 0 0 100% !important; max-width: 100% !important; box-sizing: border-box !important; } .rd-hero-content-col { text-align: center !important; padding-left: 0 !important; } .rd-hero-price-row { justify-content: center !important; } .rd-pro-con-box { margin-bottom: 15px !important; padding: 20px !important; } .rd-cta-button { padding: 14px 20px !important; width: auto !important; max-width: 100% !important; white-space: normal !important; } }
+    @media (max-width: 768px) { .rd-box-responsive { padding: 15px !important; } .rd-mobile-reset { min-width: 0 !important; width: 100% !important; flex: 0 0 100% !important; max-width: 100% !important; box-sizing: border-box !important; } .rd-hero-content-col { text-align: center !important; padding-left: 0 !important; } .rd-hero-price-row { justify-content: center !important; } .rd-cta-button { padding: 14px 20px !important; width: auto !important; max-width: 100% !important; white-space: normal !important; } }
     </style>"""
 
     top_box = f"""
@@ -197,7 +198,7 @@ def build_presentation_html(data, image_urls, product_name):
         img_url = sec.get('suggested_image_url', '').strip()
         img_tag = ""
         if img_url and img_url in image_urls and img_url not in used:
-            img_tag = f'<img src="{img_url}" style="width: 100%; border-radius: 12px; margin: 30px 0; display: block; box-shadow: 0 4px 20px rgba(0,0,0,0.06);" alt="{sec.get("image_alt","")}">'
+            img_tag = f'<a href="{img_url}" target="_blank"><img src="{img_url}" style="width: 100%; border-radius: 12px; margin: 30px 0; display: block; box-shadow: 0 4px 20px rgba(0,0,0,0.06);" alt="{sec.get("image_alt","")}"></a>'
             used.append(img_url)
         content_html += f'<h3>{fmt(sec.get("title","Info"))}</h3>{img_tag}<p>{fmt(sec.get("content",""))}</p>'
     
@@ -206,8 +207,6 @@ def build_presentation_html(data, image_urls, product_name):
         gallery = "".join([f'<a href="{i}" target="_blank"><img src="{i}" style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.05);"></a>' for i in remaining])
         content_html += f'<h3>Galleria Immagini</h3><div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-top: 20px; margin-bottom: 40px;">{gallery}</div>'
     
-    content_html += "</div>"
-
     faqs_html_list = []
     for f in data.get('faqs', []):
         if isinstance(f, dict):
@@ -216,7 +215,6 @@ def build_presentation_html(data, image_urls, product_name):
             faqs_html_list.append(f"<details style='margin-bottom: 15px; border: 1px solid #e2e8f0; border-radius: 10px; padding: 15px 25px; background: #ffffff;'><summary style='font-weight: 700; cursor: pointer; color: #1e293b; outline: none; font-size: 1.1rem;'>{fmt(q)}</summary><div style='margin-top: 15px; color: #475569; line-height: 1.7; border-top: 1px solid #f1f5f9; padding-top: 15px;'>{fmt(a)}</div></details>")
             
     faq_wrapper = f"<div class='rd-article-content'><h3>Domande Frequenti</h3>{''.join(faqs_html_list)}</div>" if faqs_html_list else ""
-    
     schema = f"""<script type="application/ld+json">{{"@context": "https://schema.org/", "@type": "Product", "name": "{product_name}", "image": "{hero_img}", "description": "{data.get('meta_desc', '').replace('"', "'")}", "offers": {{"@type": "Offer", "price": "{price_val.replace('€', '').replace(',', '.').strip() if '€' in price_val else '0.00'}", "priceCurrency": "EUR"}}}}</script>"""
     disclaimer = "<p style='font-size: 0.75rem; text-align: center; border-top: 1px solid #e2e8f0; padding-top: 25px; margin-top: 60px;'><em>In qualità di Affiliato Amazon, riceviamo un guadagno dagli acquisti idonei.</em></p>"
 
@@ -225,7 +223,7 @@ def build_presentation_html(data, image_urls, product_name):
 # --- CORE ---
 
 def process_emails():
-    print(f"\n--- 🔍 Scan {IMAP_FOLDER} ---")
+    print(f"\n--- 🔍 Scan {IMAP_FOLDER} (Python {sys.version.split()[0]}) ---")
     try:
         mail = imaplib.IMAP4_SSL(IMAP_SERVER, 993)
         mail.login(IMAP_USER, IMAP_PASS)
@@ -266,7 +264,6 @@ def process_emails():
             
             p_name = extract_product_name(subj)
             search_queries = extract_search_queries(body)
-            
             if p_name not in search_queries: search_queries.insert(0, p_name)
                 
             wp_media_results = search_smart_media_on_wp(search_queries)
@@ -284,12 +281,11 @@ def process_emails():
                 'categories': [cat_list.get(ai_data.get('selected_cat'), 1)],
                 'slug': f"presentazione-{re.sub(r'[^a-z0-9]+', '-', p_name.lower()).strip('-')}"
             }
-            if featured_id:
-                payload['featured_media'] = featured_id
+            if featured_id: payload['featured_media'] = featured_id
 
             r = requests.post(f"{WP_API_URL}/posts", headers=get_auth_header(), json=payload)
             if r.status_code == 201:
-                print(f"   ✅ Bozza HD Completa creata: {r.json().get('link')}")
+                print(f"   ✅ Bozza VISION HD creata: {r.json().get('link')}")
                 mail.store(i, '+FLAGS', '\\Seen')
 
         shutil.rmtree(temp_path)
@@ -297,7 +293,6 @@ def process_emails():
     except Exception as e: print(f"❌ Errore: {e}")
 
 if __name__ == "__main__":
-    print(f"🚀 Email Bot v98.1 Full Layout attivo (Python {sys.version.split()[0]})")
     while True:
         process_emails()
         time.sleep(600)
