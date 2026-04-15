@@ -139,11 +139,10 @@ def generate_presentation_content(product_name, notes, cat_list, photo_urls):
     - intro: DEVE avere in grassetto Brand e Prodotto.
     - faqs: ESATTAMENTE 3 domande e risposte.
     - price: Trova il prezzo nel comunicato (es. 79,99€). Se non c'è scrivi 'Vedi Prezzo'.
-    - top_features: Estrai i 3 veri punti di forza del prodotto (max 10 parole l'uno).
     - specs: Estrai i dati tecnici (es. peso, risoluzione, batteria) in una lista di max 8 oggetti. 'k' è il nome (es. Autonomia), 'v' è il valore (es. 50 ore). Se non ci sono dati, lascia vuoto.
     - quote: Trova un virgolettato (citazione del CEO o PR). Compila 'text' con la frase e 'author' col nome. Altrimenti lascia vuoto.
     
-    STRUTTURA JSON: seo_title, selected_cat (tra {cat_names}), meta_desc, intro, price, top_features (lista di 3 stringhe), specs (lista di oggetti k, v), quote (oggetto text, author), sections (title, content, suggested_image_url, image_alt), faqs.
+    STRUTTURA JSON: seo_title, selected_cat (tra {cat_names}), meta_desc, intro, price, specs (lista di oggetti k, v), quote (oggetto text, author), sections (title, content, suggested_image_url, image_alt), faqs.
     
     DATI: '{notes}'.
     """
@@ -196,19 +195,13 @@ def build_presentation_html(data, image_urls, product_name, yt_embed_code):
         f = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', t)
         return f.replace("\n- ", "<br>• ")
 
-    # Top Features Box
-    top_features_html = ""
-    if data.get('top_features'):
-        lis = "".join([f"<li style='margin-bottom: 10px;'>✅ <strong>{fmt(f)}</strong></li>" for f in data['top_features']])
-        top_features_html = f"<div style='background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 25px; margin: 30px 0;'><h3 style='margin-top: 0; color: #0f172a; font-size: 1.3rem; margin-bottom: 15px; padding:0; border:none; background:none;'>I Punti di Forza</h3><ul style='list-style-type: none; padding-left: 0; margin: 0; color: #334155;'>{lis}</ul></div>"
-
     # Quote Box
     quote_html = ""
     q = data.get('quote', {})
     if q and q.get('text'):
         quote_html = f"<blockquote style='border-left: 4px solid #ff9900; margin: 40px 0; padding: 15px 25px; background: #fffaf0; font-style: italic; color: #475569; border-radius: 0 12px 12px 0;'><p style='margin: 0; font-size: 1.15rem; line-height: 1.7;'>\"{q['text']}\"</p><footer style='margin-top: 15px; font-weight: 800; color: #1e293b;'>— {q.get('author', 'Azienda')}</footer></blockquote>"
 
-    content_html = f'<div class="rd-article-content"><p>{fmt(data.get("intro",""))}</p>{top_features_html}'
+    content_html = f'<div class="rd-article-content"><p>{fmt(data.get("intro",""))}</p>'
     used = []
     
     for idx, sec in enumerate(data.get('sections', [])):
@@ -328,7 +321,7 @@ def process_emails():
 
             r = requests.post(f"{WP_API_URL}/posts", headers=get_auth_header(), json=payload)
             if r.status_code == 201:
-                print(f"   ✅ Bozza v100.1 creata: {r.json().get('link')}")
+                print(f"   ✅ Bozza v100.2 creata: {r.json().get('link')}")
                 mail.store(i, '+FLAGS', '\\Seen')
 
         shutil.rmtree(temp_path)
@@ -336,7 +329,7 @@ def process_emails():
     except Exception as e: print(f"❌ Errore: {e}")
 
 if __name__ == "__main__":
-    print(f"🚀 Email Bot v100.1 God Mode attivo (Python {sys.version.split()[0]})")
+    print(f"🚀 Email Bot v100.2 God Mode attivo (Python {sys.version.split()[0]})")
     while True:
         process_emails()
         time.sleep(600)
