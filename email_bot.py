@@ -124,7 +124,7 @@ def extract_article_metadata(subject, body):
         return json.loads(response.choices[0].message.content)
     except: return {"topic": "Novità", "article_type": "news"}
 
-# --- LOGICA AI (TITOLI INTELLIGENTI E NORMALIZZAZIONE) ---
+# --- LOGICA AI ---
 
 def generate_presentation_content(topic, article_type, notes, cat_list, photo_urls):
     cat_names = ", ".join(list(cat_list.keys()))
@@ -138,9 +138,9 @@ def generate_presentation_content(topic, article_type, notes, cat_list, photo_ur
     - Se nessuna foto è adatta a quel paragrafo, scrivi una stringa vuota "". NON INVENTARE O MODIFICARE GLI URL.
     - 'image_alt': descrizione tecnica di ciò che vedi nella foto.
 
-    REGOLE EDITORIALI, TITOLO E NORMALIZZAZIONE:
-    - NORMALIZZAZIONE BRAND: È ASSOLUTAMENTE VIETATO usare il TUTTO MAIUSCOLO per i nomi di brand o prodotti (es. scrivi "Cupra" e non "CUPRA", "Asus" e non "ASUS"). Usa la prima lettera maiuscola. Rispetta i casi speciali intelligenti (es. "iPhone", "macOS", "eBike"). Applica questa regola ovunque: titoli, testi, alt-text e FAQ.
-    - seo_title: Crea un titolo giornalistico perfetto. DIVIETO ASSOLUTO: Non usare MAI la parola "Recensione". Se l'articolo è una 'presentazione' o 'news', usa formule come "[Prodotto] Ufficiale:", "Svelato", "Annunciato". Se è una 'guida', usa "Guida:", "Come fare...", "Consigli".
+    REGOLE EDITORIALI E TITOLO:
+    - NORMALIZZAZIONE BRAND: È ASSOLUTAMENTE VIETATO usare il TUTTO MAIUSCOLO per i nomi di brand o prodotti.
+    - seo_title: Crea un titolo giornalistico perfetto. DIVIETO ASSOLUTO: Non usare MAI la parola "Recensione". 
     - sections: 5 Sezioni con paragrafi da 80-120 parole. 3-5 grassetti (**) a sezione.
     - intro: DEVE avere in grassetto l'argomento principale ('{topic}').
     - faqs: ESATTAMENTE 3 domande e risposte.
@@ -184,7 +184,24 @@ def build_presentation_html(data, image_urls, topic, yt_embed_code):
     
     price_val = data.get("price", "N/A")
     has_price = price_val != "N/A" and price_val.strip() != ""
-    if has_price and "€" not in price_val and any(char.isdigit() for char in price_val): price_val = f"€ {price_val}"
+    
+    # Pulizia rigorosa per lo Schema.org (Google Search Console compliance)
+    schema_price = "0.00"
+    if has_price:
+        num_match = re.search(r'[\d.,]+', price_val)
+        if num_match:
+            n_str = num_match.group(0)
+            if ',' in n_str and '.' in n_str:
+                n_str = n_str.replace('.', '').replace(',', '.')
+            elif ',' in n_str:
+                n_str = n_str.replace(',', '.')
+            elif '.' in n_str and re.search(r'\.\d{3}$', n_str):
+                n_str = n_str.replace('.', '')
+            schema_price = n_str
+            
+    # Formattazione per la UI del sito
+    if has_price and "€" not in price_val and any(char.isdigit() for char in price_val): 
+        price_val = f"€ {price_val}"
     
     hero_img = image_urls[0] if image_urls else ""
     current_date = datetime.now().strftime("%d/%m/%Y")
@@ -260,8 +277,8 @@ def build_presentation_html(data, image_urls, topic, yt_embed_code):
     faq_wrapper = f"<div class='rd-article-content'><h3>Domande Frequenti</h3>{''.join(faqs_html_list)}</div>" if faqs_html_list else ""
     
     if has_price:
-        clean_price = price_val.replace('€', '').replace(',', '.').strip()
-        schema = f"""<script type="application/ld+json">{{"@context": "https://schema.org/", "@type": "Product", "name": "{topic}", "image": "{hero_img}", "description": "{data.get('meta_desc', '').replace('"', "'")}", "offers": {{"@type": "Offer", "price": "{clean_price}", "priceCurrency": "EUR"}}}}</script>"""
+        # Schema con la stringa pulita dal Regex (es. 29950.00)
+        schema = f"""<script type="application/ld+json">{{"@context": "https://schema.org/", "@type": "Product", "name": "{topic}", "image": "{hero_img}", "description": "{data.get('meta_desc', '').replace('"', "'")}", "offers": {{"@type": "Offer", "price": "{schema_price}", "priceCurrency": "EUR"}}}}</script>"""
     else:
         schema = f"""<script type="application/ld+json">{{"@context": "https://schema.org/", "@type": "Article", "headline": "{topic}", "image": "{hero_img}", "description": "{data.get('meta_desc', '').replace('"', "'")}"}}</script>"""
         
@@ -352,7 +369,7 @@ def process_emails():
 
             r = requests.post(f"{WP_API_URL}/posts", headers=get_auth_header(), json=payload)
             if r.status_code == 201:
-                print(f"   ✅ Bozza v100.7 creata ({article_type}): {r.json().get('link')}")
+                print(f"   ✅ Bozza v100.8 creata ({article_type}): {r.json().get('link')}")
                 mail.store(i, '+FLAGS', '\\Seen')
             
             time.sleep(5)
@@ -362,7 +379,7 @@ def process_emails():
     except Exception as e: print(f"❌ Errore: {e}")
 
 if __name__ == "__main__":
-    print(f"🚀 Email Bot v100.7 (Normalizzazione Brand) (Python {sys.version.split()[0]})")
+    print(f"🚀 Email Bot v100.8 (SEO Schema Fix) (Python {sys.version.split()[0]})")
     while True:
         process_emails()
         time.sleep(600)
